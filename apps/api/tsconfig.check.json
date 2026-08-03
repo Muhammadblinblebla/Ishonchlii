@@ -1,0 +1,18 @@
+// Tiplarni tekshirish uchun — build uchun EMAS.
+// `tsconfig.json` faqat `src/` ni kompilyatsiya qiladi, lekin testlar,
+// skriptlar va seed ham tekshirilishi kerak, aks holda ular buzilib
+// yotgani faqat ishga tushirilganda ma'lum bo'ladi.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"],
+    "paths": {
+      "@escrowuz/shared": ["../../packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "prisma/**/*.ts", "*.ts"]
+}

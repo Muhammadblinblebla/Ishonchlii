@@ -1,0 +1,50 @@
+{
+  "name": "escrowuz",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspace=@escrowuz/shared && npm run build --workspace=@escrowuz/api",
+    "dev:api": "npm run dev --workspace=@escrowuz/api",
+    "dev:web": "npm run dev --workspace=@escrowuz/web",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "tsc -b packages/shared && tsc -p apps/api/tsconfig.check.json",
+    "db:migrate": "npm run db:migrate --workspace=@escrowuz/api",
+    "db:deploy": "npm run db:deploy --workspace=@escrowuz/api",
+    "db:generate": "npm run db:generate --workspace=@escrowuz/api",
+    "db:seed": "npm run db:seed --workspace=@escrowuz/api",
+    "db:studio": "npm run db:studio --workspace=@escrowuz/api",
+    "ledger:check": "npm run ledger:check --workspace=@escrowuz/api",
+    "db:verify": "npm run db:verify --workspace=@escrowuz/api"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
+  },
+  "//overrides": [
+    "Next.js o'z ichiga eskirgan postcss va sharp'ni qadab qo'ygan.",
+    "npm audit yechim sifatida next@9.3.3 ga tushirishni taklif qiladi — mantiqsiz.",
+    "Shuning uchun xavfsiz versiyalar majburlanadi.",
+    "Next yangilanib, o'zi yangi versiyalarga o'tgach bu bo'limni olib tashlash mumkin."
+  ],
+  "overrides": {
+    "postcss": "^8.5.25",
+    "sharp": "^0.35.3"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "argon2@0.41.1": true,
+    "esbuild@0.21.5": true,
+    "esbuild@0.28.1": true,
+    "prisma@6.19.3": true,
+    "sharp@0.34.5": true
+  }
+}

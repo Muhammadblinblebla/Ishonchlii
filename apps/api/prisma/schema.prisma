@@ -1,0 +1,429 @@
+// Escrow platformasi — ma'lumotlar bazasi sxemasi
+//
+// QAT'IY QOIDALAR:
+//  1. Barcha pul summalari BigInt, TIYINDA. Float/Decimal ishlatilmaydi.
+//  2. `ledger_entries` va `deal_events` — APPEND-ONLY. UPDATE/DELETE trigger
+//     bilan bloklangan (migration/append_only_guard.sql).
+//  3. Foydalanuvchi jadvalida `balance` ustuni YO'Q. Balans doim ledgerdan SUM().
+//  4. Hech narsa fizik o'chirilmaydi — `deletedAt` qo'yiladi.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Supabase: pooled ulanish (:6543) — ilova ish vaqtida shuni ishlatadi
+  url       = env("DATABASE_URL")
+  // Supabase: to'g'ridan-to'g'ri ulanish (:5432) — migratsiyalar uchun.
+  // Pgbouncer orqali migratsiya ishlamaydi, shuning uchun ikkitasi alohida.
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMLAR
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// packages/shared/src/deal-status.ts bilan AYNAN mos bo'lishi shart.
+enum DealStatus {
+  DRAFT
+  AWAITING_PAYMENT
+  FUNDED
+  SHIPPED
+  DELIVERED
+  AUTO_RELEASED
+  DISPUTED
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+  RESOLVED_SPLIT
+  REFUNDED
+  CANCELLED
+  EXPIRED
+  /// Webhook summasi savdo summasiga mos kelmadi — admin qo'lda ko'radi (§5)
+  PAYMENT_MISMATCH
+}
+
+enum CommissionPayer {
+  buyer
+  seller
+  split
+}
+
+enum UserRole {
+  user
+  admin
+}
+
+/// Ledger yozuvining sababi. Hisobot va tekshiruv uchun.
+enum LedgerEntryType {
+  deposit // to'lov keldi, escrowga tushdi
+  release // savdo yakunlandi, pul sotuvchiga
+  refund // pul xaridorga qaytdi
+  commission // platforma komissiyasi
+  payout // foydalanuvchi pulni yechib oldi
+  payout_reversal // yechish muvaffaqiyatsiz, pul qaytarildi
+  adjustment // admin qo'lda tuzatdi (sabab majburiy)
+}
+
+enum DisputeStatus {
+  open
+  awaiting_evidence
+  under_review
+  resolved
+}
+
+enum DisputeResolution {
+  buyer
+  seller
+  split
+}
+
+enum PayoutStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FOYDALANUVCHILAR
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  phone        String?   @unique
+  passwordHash String    @map("password_hash")
+  fullName     String    @map("full_name")
+  role         UserRole  @default(user)
+  isVerified   Boolean   @default(false) @map("is_verified")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  dealsAsBuyer     Deal[]         @relation("BuyerDeals")
+  dealsAsSeller    Deal[]         @relation("SellerDeals")
+  dealEvents       DealEvent[]
+  disputesOpened   Dispute[]      @relation("DisputeOpener")
+  disputesResolved Dispute[]      @relation("DisputeResolver")
+  disputeFiles     DisputeFile[]
+  payouts          Payout[]
+  refreshTokens    RefreshToken[]
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  /// Tokenning O'ZI emas, SHA-256 hashi saqlanadi. Baza sizsa ham tokenlar ishlamaydi.
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  userAgent String?   @map("user_agent")
+  ipAddress String?   @map("ip_address")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SAVDOLAR
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Deal {
+  id          String @id @default(uuid()) @db.Uuid
+  buyerId     String @map("buyer_id") @db.Uuid
+  sellerId    String @map("seller_id") @db.Uuid
+  title       String
+  description String @default("")
+
+  /// Kelishilgan TOVAR NARXI (tiyin). Xaridor to'laydigan summa emas —
+  /// u `commissionPayer` ga qarab hisoblanadi, `packages/shared/src/money.ts` ga qarang.
+  amountTiyin     BigInt          @map("amount_tiyin")
+  /// Shu savdo yaratilgan paytdagi komissiya (tiyin). Siyosat keyin
+  /// o'zgarsa ham eski savdolar o'z summasini saqlab qoladi.
+  commissionTiyin BigInt          @map("commission_tiyin")
+  /// Komissiya hisoblangan stavka (bazis punkt). Audit uchun muzlatib qo'yiladi.
+  commissionBps   Int             @map("commission_bps")
+  commissionPayer CommissionPayer @map("commission_payer")
+  currency        String          @default("UZS") @db.VarChar(3)
+
+  status DealStatus @default(DRAFT)
+
+  /// Optimistik qulf. Har bir holat o'zgarishida +1 bo'ladi.
+  /// Fon vazifalari ham shu raqamga tayanadi — eskirgan job hech narsa qilmaydi.
+  version Int @default(0)
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  acceptedAt    DateTime? @map("accepted_at")
+  fundedAt      DateTime? @map("funded_at")
+  shippedAt     DateTime? @map("shipped_at")
+  completedAt   DateTime? @map("completed_at")
+  /// To'lov muddati tugaydigan vaqt (AWAITING_PAYMENT + 48 soat)
+  paymentDueAt  DateTime? @map("payment_due_at")
+  /// Avtomatik o'tkazish vaqti (SHIPPED + 7 kun). DISPUTED bo'lganda null qilinadi.
+  autoReleaseAt DateTime? @map("auto_release_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  buyer  User @relation("BuyerDeals", fields: [buyerId], references: [id])
+  seller User @relation("SellerDeals", fields: [sellerId], references: [id])
+
+  events        DealEvent[]
+  ledgerEntries LedgerEntry[]
+  shipments     Shipment[]
+  disputes      Dispute[]
+  invoices      Invoice[]
+
+  @@index([buyerId, status])
+  @@index([sellerId, status])
+  @@index([status, autoReleaseAt])
+  @@index([status, paymentDueAt])
+  @@map("deals")
+}
+
+/// APPEND-ONLY. Har bir holat o'zgarishining o'zgarmas tarixi.
+model DealEvent {
+  id         String      @id @default(uuid()) @db.Uuid
+  dealId     String      @map("deal_id") @db.Uuid
+  /// null = tizim (fon vazifasi yoki webhook) bajardi
+  actorId    String?     @map("actor_id") @db.Uuid
+  fromStatus DealStatus? @map("from_status")
+  toStatus   DealStatus  @map("to_status")
+  /// Nima sodir bo'ldi: 'deal.accepted', 'deal.auto_released', ...
+  action     String
+  reason     String?
+  ipAddress  String?     @map("ip_address")
+  /// Qo'shimcha kontekst (trek-raqam, admin izohi, webhook ID)
+  metadata   Json?
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  deal  Deal  @relation(fields: [dealId], references: [id])
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([dealId, createdAt])
+  @@map("deal_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEDGER — IKKI YOQLAMA HISOB
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// APPEND-ONLY. Butun tizimdagi pulning YAGONA haqiqat manbai.
+///
+/// Invariant: SUM(amount) = 0 — butun jadval bo'yicha HAM,
+/// har bir `transactionId` guruhi bo'yicha HAM.
+/// CI har ishga tushganda buni tekshiradi (`npm run ledger:check`).
+model LedgerEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// `packages/shared/src/accounts.ts` dagi funksiyalar quradi.
+  /// Masalan: 'user:<uuid>:available', 'platform:escrow'
+  accountId String  @map("account_id")
+  dealId    String? @map("deal_id") @db.Uuid
+
+  /// Tiyinda. Musbat = hisobga kirdi, manfiy = hisobdan chiqdi.
+  amount   BigInt
+  currency String @default("UZS") @db.VarChar(3)
+
+  entryType LedgerEntryType @map("entry_type")
+
+  /// Bitta pul harakatining barcha "oyoqlari" shu ID bilan bog'lanadi.
+  /// Guruh ichidagi SUM(amount) doim 0 bo'lishi shart.
+  transactionId String @map("transaction_id") @db.Uuid
+
+  /// Takror yozishni bloklaydi. Bir xil kalit bilan ikkinchi urinish —
+  /// hech narsa qilmaydi. Ikki marta "confirm" bosilsa pul ikki marta o'tmaydi.
+  idempotencyKey String @unique @map("idempotency_key")
+
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  deal Deal? @relation(fields: [dealId], references: [id])
+
+  @@index([accountId, createdAt])
+  @@index([transactionId])
+  @@index([dealId])
+  @@map("ledger_entries")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YETKAZIB BERISH
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Shipment {
+  id             String   @id @default(uuid()) @db.Uuid
+  dealId         String   @map("deal_id") @db.Uuid
+  carrier        String
+  trackingNumber String   @map("tracking_number")
+  note           String?
+  shippedAt      DateTime @default(now()) @map("shipped_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  deal Deal @relation(fields: [dealId], references: [id])
+
+  @@index([dealId])
+  @@map("shipments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NIZOLAR
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Dispute {
+  id       String @id @default(uuid()) @db.Uuid
+  dealId   String @map("deal_id") @db.Uuid
+  openedBy String @map("opened_by") @db.Uuid
+  reason   String
+
+  status DisputeStatus @default(open)
+
+  resolution     DisputeResolution?
+  /// RESOLVED_SPLIT uchun: xaridor oladigan ulush (bazis punkt).
+  /// 6000 = xaridorga 60%. Sotuvchi qolganini oladi.
+  buyerShareBps  Int?               @map("buyer_share_bps")
+  resolutionNote String?            @map("resolution_note")
+  resolvedBy     String?            @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime?          @map("resolved_at")
+
+  /// Dalil yuklash muddati (nizo ochilgandan + 48 soat)
+  evidenceDueAt DateTime @map("evidence_due_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  deal     Deal          @relation(fields: [dealId], references: [id])
+  opener   User          @relation("DisputeOpener", fields: [openedBy], references: [id])
+  resolver User?         @relation("DisputeResolver", fields: [resolvedBy], references: [id])
+  files    DisputeFile[]
+
+  /// Bitta savdoda bir vaqtda faqat bitta nizo bo'lishi mumkin.
+  @@unique([dealId])
+  @@index([status, createdAt])
+  @@map("disputes")
+}
+
+model DisputeFile {
+  id         String @id @default(uuid()) @db.Uuid
+  disputeId  String @map("dispute_id") @db.Uuid
+  uploadedBy String @map("uploaded_by") @db.Uuid
+
+  /// Saqlash kalitini — asl fayl nomi EMAS (tasodifiy nom, §11)
+  storageKey       String @map("storage_key")
+  originalFilename String @map("original_filename")
+  /// Fayl TARKIBIDAN aniqlangan MIME (kengaytmadan emas, §7)
+  mimeType         String @map("mime_type")
+  sizeBytes        Int    @map("size_bytes")
+  /// SHA-256 — bir xil faylni takror yuklashni aniqlash uchun
+  checksum         String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  dispute  Dispute @relation(fields: [disputeId], references: [id])
+  uploader User    @relation(fields: [uploadedBy], references: [id])
+
+  @@index([disputeId])
+  @@map("dispute_files")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TO'LOV VA YECHISH
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// To'lov provayderida yaratilgan hisob-faktura.
+model Invoice {
+  id       String @id @default(uuid()) @db.Uuid
+  dealId   String @map("deal_id") @db.Uuid
+  provider String
+
+  /// Provayder tomonidagi ID
+  externalId String @map("external_id")
+  /// Xaridor to'lashi KUTILAYOTGAN summa (tiyin). Webhook summasi
+  /// shunga AYNAN teng bo'lishi shart, aks holda PAYMENT_MISMATCH (§5).
+  amountTiyin BigInt @map("amount_tiyin")
+  payUrl      String @map("pay_url")
+
+  paidAt    DateTime? @map("paid_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  deal Deal @relation(fields: [dealId], references: [id])
+
+  @@unique([provider, externalId])
+  @@index([dealId])
+  @@map("invoices")
+}
+
+model Payout {
+  id          String @id @default(uuid()) @db.Uuid
+  userId      String @map("user_id") @db.Uuid
+  amountTiyin BigInt @map("amount_tiyin")
+  /// Karta raqami / hisob raqami — MASKALANGAN holda saqlanadi (§11)
+  destination String
+
+  status      PayoutStatus @default(pending)
+  provider    String
+  providerRef String?      @map("provider_ref")
+  failReason  String?      @map("fail_reason")
+
+  idempotencyKey String @unique @map("idempotency_key")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  processedAt DateTime? @map("processed_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("payouts")
+}
+
+/// Kelgan webhooklar. Avval SHU YERGA yoziladi, keyin navbat orqali
+/// ishlov beriladi — webhook hech qachon holatni to'g'ridan-to'g'ri
+/// o'zgartirmaydi (§5).
+model WebhookEvent {
+  id       String @id @default(uuid()) @db.Uuid
+  provider String
+
+  /// Provayder bergan ID. Takror kelgan webhook shu yerda to'xtaydi.
+  externalId String @map("external_id")
+  payload    Json
+  /// Imzo tekshiruvidan o'tdimi
+  signatureValid Boolean @map("signature_valid")
+
+  processedAt DateTime? @map("processed_at")
+  error       String?
+  attempts    Int       @default(0)
+
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@unique([provider, externalId])
+  @@index([processedAt])
+  @@map("webhook_events")
+}
+
+/// `Idempotency-Key` header uchun. Takror so'rov DB'ga tegmasdan
+/// saqlangan javobni qaytaradi (§9).
+model IdempotencyRecord {
+  id       String @id @default(uuid()) @db.Uuid
+  userId   String @map("user_id") @db.Uuid
+  endpoint String
+  key      String
+
+  /// So'rov tanasining SHA-256 hashi. Bir xil kalit bilan BOSHQA tana
+  /// kelsa — 422 xato, jimgina eski javobni qaytarmaymiz.
+  requestHash String @map("request_hash")
+
+  statusCode   Int?  @map("status_code")
+  responseBody Json? @map("response_body")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  @@unique([userId, endpoint, key])
+  @@index([createdAt])
+  @@map("idempotency_records")
+}

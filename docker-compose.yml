@@ -1,0 +1,80 @@
+# Ma'lumotlar bazasi sifatida SUPABASE ishlatilmoqda — postgres konteyneri
+# standart holatda ko'tarilmaydi. Agar Supabase'siz, to'liq lokal ishlamoqchi
+# bo'lsangiz:  docker compose --profile local-db up
+#
+# Redis faqat 7-bosqichdan (fon vazifalari) boshlab kerak bo'ladi.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: escrowuz-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Supabase o'rniga lokal Postgres kerak bo'lsa:
+  #   docker compose --profile local-db up
+  postgres:
+    image: postgres:16-alpine
+    container_name: escrowuz-postgres
+    profiles: ['local-db']
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: escrowuz
+      POSTGRES_PASSWORD: escrowuz_dev
+      POSTGRES_DB: escrowuz
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U escrowuz -d escrowuz']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: escrowuz-api
+    profiles: ['full']
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_HOST: 0.0.0.0
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '3001:3001'
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - api-storage:/app/apps/api/storage
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: escrowuz-web
+    profiles: ['full']
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+
+volumes:
+  redis-data:
+  postgres-data:
+  api-storage:
