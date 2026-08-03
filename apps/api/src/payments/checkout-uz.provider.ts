@@ -129,6 +129,18 @@ export class CheckoutUzProvider implements PaymentProvider {
   /** checkout.uz webhook'ga imzo qo'ymaydi — hujjatda imzo bo'limi yo'q. */
   readonly webhookIsSigned = false;
 
+  /**
+   * checkout.uz FAQAT pul qabul qiladi.
+   *
+   * Hujjatdagi 8 ta endpointning birortasi ham pul chiqarmaydi:
+   * create_payment, status_payment, pay_via_card, confirm_card_payment
+   * (qabul qilish) va get_balance, get_history, get_stats,
+   * get_payment_methods (faqat ko'rish).
+   *
+   * Shuning uchun sotuvchiga to'lov QO'LDA bajariladi.
+   */
+  readonly supportsPayout = false;
+
   readonly limits: ProviderLimits = {
     minAmountTiyin: MIN_SOM * 100n, //     100 000 tiyin =      1 000 so'm
     maxAmountTiyin: MAX_SOM * 100n, // 1 000 000 000 tiyin = 10 000 000 so'm
@@ -380,6 +392,21 @@ export class CheckoutUzProvider implements PaymentProvider {
         hint,
       },
     };
+  }
+
+  async getMerchantBalance(): Promise<bigint | null> {
+    try {
+      const res = await this.post<{ status?: string; balance?: { uzs?: number } }>(
+        '/get_balance',
+        {},
+      );
+      const uzs = res.balance?.uzs;
+      if (uzs === undefined || uzs === null) return null;
+      return this.fromSom(uzs);
+    } catch {
+      // Balansni bilmaslik ish jarayonini to'xtatmasligi kerak
+      return null;
+    }
   }
 
   async payout(_params: PayoutParams): Promise<PayoutResult> {

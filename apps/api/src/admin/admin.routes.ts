@@ -18,6 +18,8 @@ import { prisma, serializeBigInt } from '../db/prisma.js';
 import { escrowAmountOf, executeTransition } from '../deals/transition.js';
 import { ApiError } from '../lib/errors.js';
 import { idempotencyGuard } from '../plugins/idempotency.plugin.js';
+import * as ledger from '../ledger/ledger.service.js';
+import { getPaymentProvider } from '../payments/index.js';
 
 const resolveSchema = z
   .object({
@@ -254,25 +256,154 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  // ── QO'LDA TO'LOV NAVBATI ─────────────────────────────────────────────────
+  //
+  // checkout.uz pul chiqarishni qo'llab-quvvatlamaydi, shuning uchun
+  // sotuvchiga to'lov admin tomonidan bank orqali bajariladi.
+
+  app.get('/admin/payouts', async (req, reply) => {
+    const { status } = z
+      .object({ status: z.enum(['pending', 'completed', 'failed', 'all']).default('pending') })
+      .parse(req.query);
+
+    const payouts = await prisma.payout.findMany({
+      where: status === 'all' ? {} : { status },
+      orderBy: { createdAt: 'asc' }, // eng eskisi birinchi
+      include: { user: { select: { id: true, fullName: true, email: true, phone: true } } },
+    });
+
+    return reply.send(serializeBigInt({ payouts, count: payouts.length }));
+  });
+
+  /**
+   * "O'tkazdim" — admin bank orqali pul yuborgach belgilaydi.
+   *
+   * DIQQAT: pul foydalanuvchi hisobidan yechish SO'RALGANDA yechilgan
+   * (ledgerga o'shanda yozilgan). Bu yerda faqat holat yangilanadi —
+   * qo'shimcha ledger yozuvi YO'Q, aks holda pul ikki marta chiqardi.
+   */
+  app.post(
+    '/admin/payouts/:id/complete',
+    { preHandler: [idempotencyGuard] },
+    async (req, reply) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      const { reference } = z
+        .object({
+          reference: z
+            .string()
+            .trim()
+            .min(3, 'O\'tkazma raqami yoki izoh kerak — keyin tekshirish uchun')
+            .max(200),
+        })
+        .parse(req.body);
+
+      const payout = await prisma.payout.findUnique({ where: { id } });
+      if (!payout) throw ApiError.notFound('So\'rov topilmadi');
+      if (payout.status === 'completed') {
+        throw ApiError.conflict('Bu so\'rov allaqachon bajarilgan');
+      }
+      if (payout.status === 'failed') {
+        throw ApiError.conflict('Bu so\'rov bekor qilingan — pul allaqachon qaytarilgan');
+      }
+
+      const updated = await prisma.payout.update({
+        where: { id },
+        data: { status: 'completed', providerRef: reference, processedAt: new Date() },
+      });
+
+      return reply.send(serializeBigInt({ payout: updated }));
+    },
+  );
+
+  /**
+   * "Bajara olmadim" — pul foydalanuvchi hisobiga QAYTARILADI.
+   *
+   * Bu yerda ledgerga teskari yozuv qo'shiladi, chunki pul so'rov
+   * paytida hisobdan yechilgan edi.
+   */
+  app.post(
+    '/admin/payouts/:id/reject',
+    { preHandler: [idempotencyGuard] },
+    async (req, reply) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      const { reason } = z
+        .object({ reason: z.string().trim().min(10, 'Sabab kamida 10 belgi').max(500) })
+        .parse(req.body);
+
+      const payout = await prisma.payout.findUnique({ where: { id } });
+      if (!payout) throw ApiError.notFound('So\'rov topilmadi');
+      if (payout.status !== 'pending' && payout.status !== 'processing') {
+        throw ApiError.conflict(`Bu so\'rov "${payout.status}" holatida — bekor qilib bo\'lmaydi`);
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.payout.update({
+          where: { id },
+          data: { status: 'failed', failReason: reason, processedAt: new Date() },
+        });
+        // Pulni hisobga qaytaramiz
+        await ledger.post(
+          {
+            legs: ledger.payoutReversalLegs(payout.userId, payout.amountTiyin, payout.provider),
+            idempotencyKey: `payout-reversal:${payout.id}`,
+          },
+          tx,
+        );
+      });
+
+      return reply.send({ ok: true });
+    },
+  );
+
   // ── Umumiy ko'rsatkichlar ─────────────────────────────────────────────────
 
   app.get('/admin/stats', async (_req, reply) => {
-    const [openDisputes, mismatches, activeDeals, escrow] = await Promise.all([
-      prisma.dispute.count({ where: { resolvedAt: null } }),
-      prisma.deal.count({ where: { status: 'PAYMENT_MISMATCH' } }),
-      prisma.deal.count({ where: { status: { in: ['FUNDED', 'SHIPPED'] } } }),
-      prisma.ledgerEntry.aggregate({
-        where: { accountId: 'platform:escrow' },
-        _sum: { amount: true },
-      }),
-    ]);
+    const provider = getPaymentProvider();
+
+    const [openDisputes, mismatches, activeDeals, escrow, pendingPayouts, providerBalance] =
+      await Promise.all([
+        prisma.dispute.count({ where: { resolvedAt: null } }),
+        prisma.deal.count({ where: { status: 'PAYMENT_MISMATCH' } }),
+        prisma.deal.count({ where: { status: { in: ['FUNDED', 'SHIPPED'] } } }),
+        prisma.ledgerEntry.aggregate({
+          where: { accountId: 'platform:escrow' },
+          _sum: { amount: true },
+        }),
+        prisma.payout.aggregate({
+          where: { status: { in: ['pending', 'processing'] } },
+          _sum: { amountTiyin: true },
+          _count: true,
+        }),
+        provider.getMerchantBalance(),
+      ]);
+
+    const escrowTiyin = escrow._sum.amount ?? 0n;
+
+    // ── ESCROW HIMOYASI ──────────────────────────────────────────────────────
+    //
+    // Provayder balansi escrowdagi puldan KAM bo'lsa — platforma o'z
+    // majburiyatini bajara olmaydi. Savdo bekor bo'lganda xaridorga
+    // qaytarishga pul yetmaydi.
+    //
+    // Bu odatda bitta sababdan bo'ladi: platforma egasi checkout.uz
+    // kabinetidan haddan ortiq pul yechib olgan.
+    const shortfall =
+      providerBalance !== null && providerBalance < escrowTiyin
+        ? escrowTiyin - providerBalance
+        : null;
 
     return reply.send(
       serializeBigInt({
         openDisputes,
         paymentMismatches: mismatches,
         activeDeals,
-        escrowTiyin: escrow._sum.amount ?? 0n,
+        escrowTiyin,
+        pendingPayoutCount: pendingPayouts._count,
+        pendingPayoutTiyin: pendingPayouts._sum.amountTiyin ?? 0n,
+        providerBalanceTiyin: providerBalance,
+        /** null bo'lmasa — DIQQAT: escrow majburiyati qoplanmagan. */
+        shortfallTiyin: shortfall,
+        payoutIsManual: !provider.supportsPayout,
       }),
     );
   });

@@ -80,8 +80,12 @@ export async function cleanupTestUsers(): Promise<void> {
 
   const ids = users.map((u) => u.id);
 
+  // Tashqi kalit bog'liqliklarini avval tozalaymiz. Bular append-only
+  // EMAS, shuning uchun o'chirish xavfsiz.
   await prisma.refreshToken.deleteMany({ where: { userId: { in: ids } } });
   await prisma.idempotencyRecord.deleteMany({ where: { userId: { in: ids } } });
+  await prisma.notification.deleteMany({ where: { userId: { in: ids } } });
+  await prisma.payout.deleteMany({ where: { userId: { in: ids } } });
 
   // Savdosi bo'lmagan foydalanuvchilarnigina o'chiramiz. Savdosi borlarida
   // deal_events append-only bo'lgani uchun kaskad o'chirish ishlamaydi —

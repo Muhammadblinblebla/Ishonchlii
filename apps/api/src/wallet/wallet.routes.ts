@@ -119,7 +119,30 @@ export const walletRoutes: FastifyPluginAsync = async (app) => {
         { isolationLevel: 'Serializable', timeout: 20_000 },
       );
 
-      // ── 2. Provayderga yuborish (tranzaksiyadan TASHQARIDA) ───────────────
+      // ── 2. QO'LDA to'lov: provayder pul chiqarishni qo'llab-quvvatlamasa ──
+      //
+      // checkout.uz faqat pul QABUL QILADI — chiqarish API'si yo'q.
+      // Bunday holda so'rov admin navbatida qoladi: administrator bank
+      // orqali o'tkazadi va "bajarildi" deb belgilaydi.
+      //
+      // Pul foydalanuvchi hisobidan ALLAQACHON yechilgan (1-qadam), ya'ni
+      // u shu summani ikkinchi marta so'rab ololmaydi.
+      if (!provider.supportsPayout) {
+        await prisma.payout.update({
+          where: { id: payout.id },
+          data: { status: 'pending' },
+        });
+        return reply.send(
+          serializeBigInt({
+            payout: { ...payout, status: 'pending' },
+            manual: true,
+            message:
+              'So\'rov qabul qilindi. Pul 1–2 ish kuni ichida kartangizga o\'tkaziladi.',
+          }),
+        );
+      }
+
+      // ── Avtomatik to'lov (provayder qo'llab-quvvatlasa) ───────────────────
       let result;
       try {
         result = await provider.payout({

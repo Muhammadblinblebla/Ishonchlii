@@ -50,6 +50,14 @@ export class MockPaymentProvider implements PaymentProvider {
   /** Mock imzo qo'yadi — bu yo'l ham sinalishi kerak. */
   readonly webhookIsSigned = true;
 
+  /**
+   * Mock payout'ni qo'llab-quvvatlaydi — o'sha yo'l ham sinalishi kerak.
+   *
+   * Tip ataylab `boolean`, `true` emas: testlar buni bekor qilib
+   * "payout'siz provayder" (checkout.uz kabi) yo'lini ham sinaydi.
+   */
+  readonly supportsPayout: boolean = true;
+
   readonly limits: ProviderLimits = {
     minAmountTiyin: 100_000n, //         1 000 so'm
     maxAmountTiyin: 1_000_000_000n, // 10 000 000 so'm — checkout.uz bilan bir xil
@@ -111,6 +119,10 @@ export class MockPaymentProvider implements PaymentProvider {
       case 'failed':
         return Promise.resolve({ state: 'failed', reason: 'Mock: to\'lov amalga oshmadi' });
     }
+  }
+
+  getMerchantBalance(): Promise<bigint | null> {
+    return Promise.resolve(null);
   }
 
   payout(params: PayoutParams): Promise<PayoutResult> {

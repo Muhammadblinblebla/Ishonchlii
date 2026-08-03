@@ -124,6 +124,26 @@ export interface PaymentProvider {
   readonly name: string;
   readonly limits: ProviderLimits;
 
+  /**
+   * Provayder pul CHIQARISHNI qo'llab-quvvatlaydimi.
+   *
+   * `false` bo'lsa (checkout.uz shunday) sotuvchiga pul o'tkazish qo'lda
+   * bajariladi: yechish so'rovi admin panelida ko'rinadi, admin bank
+   * orqali o'tkazadi va "bajarildi" deb belgilaydi.
+   */
+  readonly supportsPayout: boolean;
+
+  /**
+   * Provayderdagi merchant balansi (tiyin).
+   *
+   * Nega kerak: bizning ledgerimizda escrowda turgan pul provayder
+   * balansidan KO'P bo'lib qolmasligi kerak. Bo'lib qolsa — savdo bekor
+   * bo'lganda xaridorga qaytarishga pul yetmaydi.
+   *
+   * Qo'llab-quvvatlanmasa `null` qaytaradi.
+   */
+  getMerchantBalance(): Promise<bigint | null>;
+
   createInvoice(params: CreateInvoiceParams): Promise<Invoice>;
 
   /**
