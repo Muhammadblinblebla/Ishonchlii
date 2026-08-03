@@ -3,9 +3,16 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
+import { MoneyError } from '@escrowuz/shared';
 import { env } from './config/env.js';
 import { ApiError } from './lib/errors.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
+import { dealRoutes } from './deals/deals.routes.js';
+import { walletRoutes } from './wallet/wallet.routes.js';
+import { webhookRoutes } from './webhooks/webhooks.routes.js';
+import { mockPayRoutes } from './dev/mock-pay.routes.js';
+import { adminRoutes } from './admin/admin.routes.js';
+import { idempotencyPlugin } from './plugins/idempotency.plugin.js';
 import { authPlugin } from './plugins/auth.plugin.js';
 
 export interface BuildAppOptions {
@@ -65,12 +72,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   }
 
   await app.register(authPlugin);
-
-  app.get('/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
-
-  await app.register(authRoutes);
+  await app.register(idempotencyPlugin);
 
   // ── Xatolarni yagona joyda qayta ishlash ──────────────────────────────────
+  //
+  // DIQQAT — TARTIB MUHIM: bu MARSHRUTLARDAN OLDIN o'rnatilishi shart.
+  // Fastify'da `register()` bilan yaratilgan har bir kontekst o'zi tug'ilgan
+  // paytdagi xato handlerini oladi. Marshrutlardan keyin o'rnatilsa, ular
+  // Fastify'ning STANDART handleri bilan qolib ketadi va javob shakli
+  // butunlay boshqacha bo'ladi.
   //
   // `err` ataylab `unknown`: bu yerga Fastify xatosi ham, Prisma xatosi ham,
   // kutubxona tashlagan har qanday narsa ham kelishi mumkin. Uni Error deb
@@ -79,6 +89,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (err instanceof ApiError) {
       return reply.code(err.statusCode).send({
         error: { code: err.code, message: err.message, details: err.details },
+      });
+    }
+
+    // Pul matematikasidagi xato — foydalanuvchi kiritgan summa noto'g'ri.
+    // Bu ichki nosozlik emas, shuning uchun 500 emas, 400.
+    if (err instanceof MoneyError) {
+      return reply.code(400).send({
+        error: { code: 'VALIDATION_ERROR', message: err.message },
       });
     }
 
@@ -127,6 +145,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.setNotFoundHandler((_req, reply) =>
     reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Bunday manzil topilmadi' } }),
   );
+
+  // ── Marshrutlar — xato handleridan KEYIN ──────────────────────────────────
+  app.get('/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
+
+  await app.register(authRoutes);
+  await app.register(dealRoutes);
+  await app.register(walletRoutes);
+  await app.register(webhookRoutes);
+  await app.register(mockPayRoutes);
+  await app.register(adminRoutes);
 
   return app;
 }

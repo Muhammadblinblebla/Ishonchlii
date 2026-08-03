@@ -76,8 +76,42 @@ describe('POST /auth/register', () => {
     const { res } = await registerUser(email);
 
     expect(res.statusCode).toBe(409);
-    // Qaysi maydon band ekani aytilmasligi kerak (email enumeratsiya himoyasi)
-    expect(res.json().error.message).not.toMatch(/email/i);
+    expect(res.json().error.code).toBe('CONFLICT');
+  });
+
+  it('band email va band telefon uchun xabar BIR XIL', async () => {
+    // Xabar qaysi maydon band ekanini oshkor qilmasligi kerak: aks holda
+    // hujumchi telefon raqamlarni bitta-bitta sinab, kim ro'yxatdan
+    // o'tganini aniqlab olardi.
+    const phone = `+998${Math.floor(900_000_000 + Math.random() * 99_999_999)}`;
+    const first = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: uniqueEmail(), password: VALID_PASSWORD, fullName: 'Test', phone },
+    });
+    expect(first.statusCode).toBe(201);
+
+    // Band EMAIL bilan
+    const dupEmail = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: {
+        email: (first.json() as Record<string, any>)['user'].email,
+        password: VALID_PASSWORD,
+        fullName: 'Test',
+      },
+    });
+
+    // Band TELEFON bilan (email yangi)
+    const dupPhone = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: uniqueEmail(), password: VALID_PASSWORD, fullName: 'Test', phone },
+    });
+
+    expect(dupEmail.statusCode).toBe(409);
+    expect(dupPhone.statusCode).toBe(409);
+    expect(dupEmail.json().error.message).toBe(dupPhone.json().error.message);
   });
 
   it('8 belgidan qisqa parolni rad etadi (§11)', async () => {

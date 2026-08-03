@@ -5,6 +5,7 @@
  * Admin paroli .env dagi SEED_ADMIN_PASSWORD dan olinadi, kodga yozilmaydi.
  */
 
+import '../scripts/load-env.js';
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
 

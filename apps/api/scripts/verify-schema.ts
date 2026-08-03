@@ -16,6 +16,7 @@
  *   npx tsx scripts/verify-schema.ts
  */
 
+import './load-env.js';
 import { PrismaClient } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 

@@ -5,7 +5,20 @@
  * yiqilishidan ko'ra, umuman ishga tushmagani xavfsizroq.
  */
 
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+
+// Monorepo ildizidagi `.env` ni yuklaymiz.
+//
+// Production'da o'zgaruvchilar muhitdan keladi (Docker, hosting paneli) va
+// `.env` fayli bo'lmaydi — shuning uchun mavjudligi tekshiriladi. `DATABASE_URL`
+// allaqachon o'rnatilgan bo'lsa faylga umuman tegilmaydi: tashqi muhit
+// har doim ustun turadi.
+if (!process.env['DATABASE_URL']) {
+  const envPath = fileURLToPath(new URL('../../../../.env', import.meta.url));
+  if (existsSync(envPath)) process.loadEnvFile(envPath);
+}
 
 const isProd = process.env['NODE_ENV'] === 'production';
 
@@ -41,6 +54,16 @@ const schema = z.object({
    */
   CHECKOUT_UZ_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
   CHECKOUT_UZ_WEBHOOK_URL: z.string().default(''),
+
+  // ─── Email ────────────────────────────────────────────────────────────────
+  // `log`  — konsolga chiqaradi (standart). Hech qanday sozlama kerak emas.
+  // `smtp` — haqiqiy yuborish. Har qanday SMTP xizmati bilan ishlaydi.
+  EMAIL_DRIVER: z.enum(['log', 'smtp']).default('log'),
+  EMAIL_FROM: z.string().default('Escrow.uz <noreply@escrow.uz>'),
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
 
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   STORAGE_LOCAL_PATH: z.string().default('./storage/uploads'),
@@ -116,6 +139,24 @@ if (raw.PAYMENT_PROVIDER === 'checkout_uz') {
         '     Sinash uchun eng kichik summani (1 000 so\'m) ishlating.\n',
     );
   }
+}
+
+// SMTP tanlangan bo'lsa sozlamalari to'liq bo'lishi kerak.
+if (raw.EMAIL_DRIVER === 'smtp' && raw.SMTP_HOST.trim() === '') {
+  console.error(
+    '\n  ❌ EMAIL_DRIVER="smtp", lekin SMTP_HOST to\'ldirilmagan.\n' +
+      '     .env ni to\'ldiring yoki EMAIL_DRIVER="log" qiling.\n',
+  );
+  process.exit(1);
+}
+
+// Production'da `log` drayveri = foydalanuvchilar hech qanday xabar olmaydi.
+// Savdo ishlaydi, lekin hech kim nima bo'layotganini bilmaydi.
+if (isProd && raw.EMAIL_DRIVER === 'log') {
+  console.warn(
+    '\n  ⚠️  Production muhitida EMAIL_DRIVER="log" — xatlar YUBORILMAYDI.\n' +
+      '     Foydalanuvchilar savdo holati o\'zgarganini bilmaydi.\n',
+  );
 }
 
 // Production'da mock to'lov = pul kelmagan savdolar "to'langan" deb belgilanadi.

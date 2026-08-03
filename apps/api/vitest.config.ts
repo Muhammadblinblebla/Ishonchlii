@@ -13,9 +13,10 @@ export default defineConfig({
     // Pul bilan ishlaydigan testlar bir xil bazaga tegadi — parallel
     // ishlasa bir-birining yozuvlarini ko'radi. Ketma-ket bajariladi.
     fileParallelism: false,
-    // argon2 hashlash sekin (ataylab), Supabase esa uzoqda
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    // Supabase ap-northeast-1 da — har so'rov ~200ms yo'l vaqti oladi,
+    // Serializable tranzaksiya esa bir necha so'rovdan iborat.
+    testTimeout: 90_000,
+    hookTimeout: 90_000,
   },
   resolve: {
     alias: {

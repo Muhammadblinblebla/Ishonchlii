@@ -58,6 +58,12 @@ export class PaymentAmountError extends Error {
 const MIN_SOM = 1_000n;
 const MAX_SOM = 10_000_000n;
 
+/**
+ * `/create_payment` javobi (haqiqiy so'rov bilan tekshirilgan, 2026-08-03).
+ *
+ * Bu yerda maydonlar `_` bilan boshlanadi, `/status_payment` da esa yo'q —
+ * provayder API'si izchil emas, shuning uchun ikkalasi alohida tiplangan.
+ */
 interface CreatePaymentResponse {
   status?: string;
   payment?: {
@@ -66,18 +72,37 @@ interface CreatePaymentResponse {
     _url?: string;
     _amount?: number;
     _status?: string;
+    /** Hisob-faktura qancha yashaydi. Amalda 3600 soniya = 1 soat. */
+    _lifteme?: { _second?: number; _hour?: number };
   };
   message?: string;
 }
 
+/**
+ * `/status_payment` javobi.
+ *
+ * ⚠️ DIQQAT: bu `/create_payment` dan BOSHQA shaklda keladi.
+ * Hujjatda (https://checkout.uz/api-docs) `payment` konteyneri va `_id`,
+ * `_amount` kabi maydonlar ko'rsatilgan, lekin HAQIQIY javob boshqacha:
+ *
+ *   { "status": "success",
+ *     "data": { "id": "50344", "amount": "1000.00",
+ *               "status": "pending", "paid_at": null } }
+ *
+ * Bu 2026-08-03 da haqiqiy so'rov bilan tekshirilgan. Hujjatga ishonib
+ * yozilgan kod `payment` ni o'qib `undefined` olardi — ya'ni har bir
+ * to'lov "topilmadi" deb hisoblanib, pul hech qachon hisobga o'tmasdi.
+ *
+ * Summa ham son emas, `"1000.00"` ko'rinishidagi SATR.
+ */
 interface StatusPaymentResponse {
   status?: string;
-  payment?: {
-    _id?: number;
-    _uuid?: string;
-    _amount?: number;
-    _status?: string;
-    _perform_time?: number;
+  data?: {
+    id?: string | number;
+    amount?: string | number;
+    status?: string;
+    created_at?: string;
+    paid_at?: string | null;
   };
   message?: string;
 }
@@ -153,12 +178,33 @@ export class CheckoutUzProvider implements PaymentProvider {
     return som;
   }
 
-  /** So'mni tiyinga qaytaradi. Provayder javobidagi summani o'girish uchun. */
-  private fromSom(som: number): bigint {
-    if (!Number.isInteger(som)) {
-      throw new PaymentAmountError(`checkout.uz kasr summa qaytardi: ${som}`);
+  /**
+   * Provayder qaytargan summani tiyinga o'giradi.
+   *
+   * checkout.uz summani turli ko'rinishda qaytaradi:
+   *   `/create_payment`  → `1000`        (son)
+   *   `/status_payment`  → `"1000.00"`   (satr, ikki xonali kasr bilan)
+   *
+   * Ikkalasi ham qo'llab-quvvatlanadi. `parseFloat` ISHLATILMAYDI:
+   * suzuvchi nuqta arifmetikasi katta summalarda tiyinni yo'qotadi
+   * (`0.1 + 0.2 !== 0.3`). Buning o'rniga satr bo'linadi va butun son
+   * arifmetikasi bilan hisoblanadi.
+   */
+  private fromSom(value: string | number): bigint {
+    const text = String(value).trim();
+
+    const match = /^(\d+)(?:[.,](\d{1,2}))?$/.exec(text);
+    if (!match) {
+      throw new PaymentAmountError(
+        `checkout.uz tushunarsiz summa qaytardi: "${text}". ` +
+          `Kutilgan format: "1000" yoki "1000.00".`,
+      );
     }
-    return BigInt(som) * 100n;
+
+    const whole = BigInt(match[1]!);
+    // "5" → 50 tiyin, "50" → 50 tiyin. Bir xonali kasr o'nlik ulush.
+    const fraction = (match[2] ?? '').padEnd(2, '0');
+    return whole * 100n + BigInt(fraction);
   }
 
   // ── HTTP ───────────────────────────────────────────────────────────────────
@@ -226,11 +272,18 @@ export class CheckoutUzProvider implements PaymentProvider {
       );
     }
 
+    // Hisob-faktura muddati provayder tomonidan belgilanadi — amalda 1 soat.
+    // Bizning 48 soatlik to'lov oynamizdan ancha qisqa, shuning uchun uni
+    // saqlab qo'yamiz: muddati o'tgan havolani xaridorga qayta ko'rsatish
+    // "sahifa ochilmadi" degan tushunarsiz xatoga olib kelardi.
+    const lifetimeSeconds = payment._lifteme?._second ?? 3600;
+
     return {
       // Webhook `data.order_id` bilan keladi va u `_id` ga teng — shuning
       // uchun aynan `_id` ni saqlaymiz, `_uuid` ni emas.
       invoiceId: String(payment._id),
       payUrl: payment._url,
+      expiresAt: new Date(Date.now() + lifetimeSeconds * 1000),
     };
   }
 
@@ -251,29 +304,44 @@ export class CheckoutUzProvider implements PaymentProvider {
       };
     }
 
-    const payment = response.payment;
+    const payment = response.data;
     if (!payment) return { state: 'not_found' };
 
-    const status = payment._status;
+    const status = payment.status;
 
-    if (status === 'paid') {
-      if (payment._amount === undefined) {
+    if (status === 'paid' || status === 'success' || status === 'confirmed') {
+      if (payment.amount === undefined || payment.amount === null) {
         return { state: 'unavailable', error: 'Javobda summa yo\'q', retryable: true };
       }
       return {
         state: 'paid',
-        amountTiyin: this.fromSom(payment._amount),
-        paidAt: payment._perform_time ? new Date(payment._perform_time) : null,
-        providerRef: String(payment._id ?? invoiceId),
+        amountTiyin: this.fromSom(payment.amount),
+        paidAt: payment.paid_at ? new Date(payment.paid_at) : null,
+        providerRef: String(payment.id ?? invoiceId),
       };
     }
 
-    if (status === 'pending') return { state: 'pending' };
-    if (status === 'cancelled') return { state: 'cancelled', reason: 'Provayder bekor qildi' };
-    if (status === 'failed') return { state: 'failed', reason: 'To\'lov amalga oshmadi' };
+    if (status === 'pending' || status === 'waiting' || status === 'created') {
+      return { state: 'pending' };
+    }
+    if (status === 'cancelled' || status === 'canceled') {
+      return { state: 'cancelled', reason: 'To\'lov bekor qilindi' };
+    }
+    if (status === 'failed' || status === 'expired' || status === 'rejected') {
+      return { state: 'failed', reason: `To'lov amalga oshmadi (${status})` };
+    }
 
-    // Noma'lum holat — taxmin qilmaymiz.
-    return { state: 'unavailable', error: `Noma'lum holat: ${String(status)}`, retryable: true };
+    // Noma'lum holat — TAXMIN QILMAYMIZ.
+    //
+    // "Ehtimol to'langandir" deb hisoblash tovarni bepul berib yuborishga,
+    // "to'lanmagan" deb hisoblash esa to'lagan xaridorning savdosini bekor
+    // qilishga olib kelardi. Ikkalasi ham noto'g'ri, shuning uchun holatni
+    // NOMA'LUM deb belgilaymiz va qayta so'raymiz.
+    return {
+      state: 'unavailable',
+      error: `checkout.uz noma'lum holat qaytardi: "${String(status)}"`,
+      retryable: true,
+    };
   }
 
   parseWebhook(rawBody: string, _headers: Record<string, string | undefined>): WebhookParse {

@@ -78,6 +78,14 @@ enum DisputeResolution {
   split
 }
 
+enum NotificationStatus {
+  pending
+  sent
+  failed
+  /// Qabul qiluvchi manzili yo'q yoki noto'g'ri — qayta urinilmaydi
+  skipped
+}
+
 enum PayoutStatus {
   pending
   processing
@@ -109,6 +117,7 @@ model User {
   disputeFiles     DisputeFile[]
   payouts          Payout[]
   refreshTokens    RefreshToken[]
+  notifications    Notification[]
 
   @@index([deletedAt])
   @@map("users")
@@ -180,6 +189,7 @@ model Deal {
   shipments     Shipment[]
   disputes      Dispute[]
   invoices      Invoice[]
+  notifications Notification[]
 
   @@index([buyerId, status])
   @@index([sellerId, status])
@@ -348,6 +358,11 @@ model Invoice {
   amountTiyin BigInt @map("amount_tiyin")
   payUrl      String @map("pay_url")
 
+  /// Hisob-faktura muddati. checkout.uz uni 1 SOATDA o'chiradi — bizning
+  /// 48 soatlik to'lov oynamizdan qisqa. Muddati o'tgan havola qayta
+  /// ishlatilmaydi, yangisi yaratiladi.
+  expiresAt DateTime? @map("expires_at")
+
   paidAt    DateTime? @map("paid_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
@@ -403,6 +418,57 @@ model WebhookEvent {
   @@unique([provider, externalId])
   @@index([processedAt])
   @@map("webhook_events")
+}
+
+/// XABARNOMALAR — OUTBOX.
+///
+/// Xabarnoma savdo tranzaksiyasining ICHIDA yoziladi. Sababi: agar
+/// to'g'ridan-to'g'ri yuborishga urinsak va SMTP sekin ishlasa, butun
+/// tranzaksiya kutib turardi; yuborilgandan keyin tranzaksiya yiqilsa esa
+/// bo'lmagan hodisa haqida xabar ketgan bo'lardi.
+///
+/// Shuning uchun: tranzaksiya ichida NAVBATGA yoziladi, fon vazifasi
+/// yuboradi. Tranzaksiya yiqilsa xabarnoma ham yo'qoladi — to'g'ri xatti-harakat.
+model Notification {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String  @map("user_id") @db.Uuid
+  dealId String? @map("deal_id") @db.Uuid
+
+  /// 'deal.funded', 'deal.shipped', 'dispute.opened', ...
+  type    String
+  channel String @default("email")
+
+  /// Xabar matnini qurish uchun kerakli ma'lumot (savdo nomi, summa, sabab).
+  /// Matnning O'ZI bu yerda saqlanmaydi — u yuborish paytida quriladi.
+  ///
+  /// Nega: matnni qurish uchun foydalanuvchi ismi kerak, ya'ni bazaga yana
+  /// bir so'rov. Uni savdo tranzaksiyasi ICHIDA qilish tranzaksiyani
+  /// cho'zadi va qulflarni uzoq ushlab turadi — bu esa `Serializable`
+  /// izolyatsiyada timeout va poyga holatlariga olib keladi.
+  context Json @default("{}")
+
+  /// Quyidagilar YUBORISH paytida to'ldiriladi — audit izi uchun.
+  recipient String?
+  subject   String?
+  body      String? @db.Text
+
+  status   NotificationStatus @default(pending)
+  attempts Int                @default(0)
+  error    String?
+  sentAt   DateTime?          @map("sent_at")
+
+  /// Takror yuborishni bloklaydi. Fon vazifasi qayta ishlaganda yoki
+  /// o'tish takrorlanganda bir xil xabar ikki marta ketmaydi.
+  dedupeKey String @unique @map("dedupe_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User  @relation(fields: [userId], references: [id])
+  deal Deal? @relation(fields: [dealId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
 }
 
 /// `Idempotency-Key` header uchun. Takror so'rov DB'ga tegmasdan

@@ -14,6 +14,7 @@
  *   5. Har bir guruhda kamida 2 ta yozuv bor
  */
 
+import './load-env.js';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -24,6 +25,20 @@ interface Problem {
 }
 
 const problems: Problem[] = [];
+
+/**
+ * Xom SQL'dagi `SUM()` natijasini BigInt'ga keltiradi.
+ *
+ * Prisma `$queryRaw` da `SUM(bigint)` ni BigInt sifatida qaytarmaydi —
+ * drayverga qarab `Decimal`, `string` yoki `number` bo'lishi mumkin. Uni
+ * to'g'ridan-to'g'ri BigInt bilan `!==` orqali solishtirish HAR DOIM `true`
+ * beradi, ya'ni tekshiruv jimgina yolg'on ogohlantirish chiqaradi.
+ */
+function toBigInt(value: unknown): bigint {
+  if (value === null || value === undefined) return 0n;
+  if (typeof value === 'bigint') return value;
+  return BigInt(String(value));
+}
 
 function fmt(tiyin: bigint): string {
   const negative = tiyin < 0n;
@@ -52,7 +67,7 @@ async function main(): Promise<void> {
 
   // ── 2. Har bir tranzaksiya guruhi ─────────────────────────────────────────
   const unbalanced = await prisma.$queryRaw<
-    Array<{ transaction_id: string; sum: bigint; legs: bigint }>
+    Array<{ transaction_id: string; sum: unknown; legs: unknown }>
   >`
     SELECT transaction_id, SUM(amount) AS sum, COUNT(*) AS legs
       FROM ledger_entries
@@ -64,13 +79,15 @@ async function main(): Promise<void> {
   for (const row of unbalanced) {
     problems.push({
       check: 'Tranzaksiya muvozanati',
-      detail: `transaction_id=${row.transaction_id}: yig'indi=${row.sum}, oyoqlar=${row.legs}`,
+      detail:
+        `transaction_id=${row.transaction_id}: ` +
+        `yig'indi=${toBigInt(row.sum)}, oyoqlar=${toBigInt(row.legs)}`,
     });
   }
 
   // ── 3. Manfiy `available` balanslar ───────────────────────────────────────
   const negativeAvailable = await prisma.$queryRaw<
-    Array<{ account_id: string; balance: bigint }>
+    Array<{ account_id: string; balance: unknown }>
   >`
     SELECT account_id, SUM(amount) AS balance
       FROM ledger_entries
@@ -83,13 +100,13 @@ async function main(): Promise<void> {
   for (const row of negativeAvailable) {
     problems.push({
       check: 'Manfiy balans',
-      detail: `${row.account_id}: ${fmt(row.balance)} — foydalanuvchi mavjud bo'lmagan pulni yechib olgan.`,
+      detail: `${row.account_id}: ${fmt(toBigInt(row.balance))} — foydalanuvchi mavjud bo'lmagan pulni yechib olgan.`,
     });
   }
 
   // ── 4. Manfiy pending balanslar ───────────────────────────────────────────
   const negativePending = await prisma.$queryRaw<
-    Array<{ account_id: string; balance: bigint }>
+    Array<{ account_id: string; balance: unknown }>
   >`
     SELECT account_id, SUM(amount) AS balance
       FROM ledger_entries
@@ -102,7 +119,7 @@ async function main(): Promise<void> {
   for (const row of negativePending) {
     problems.push({
       check: 'Manfiy muzlatilgan balans',
-      detail: `${row.account_id}: ${fmt(row.balance)}`,
+      detail: `${row.account_id}: ${fmt(toBigInt(row.balance))}`,
     });
   }
 
@@ -123,12 +140,12 @@ async function main(): Promise<void> {
   }
 
   // ── 6. Escrow = barcha pending yig'indisi ─────────────────────────────────
-  const pendingTotal = await prisma.$queryRaw<Array<{ sum: bigint | null }>>`
+  const pendingTotal = await prisma.$queryRaw<Array<{ sum: unknown }>>`
     SELECT SUM(amount) AS sum
       FROM ledger_entries
      WHERE account_id LIKE 'user:%:pending'
   `;
-  const pendingSum = pendingTotal[0]?.sum ?? 0n;
+  const pendingSum = toBigInt(pendingTotal[0]?.sum);
 
   if (pendingSum !== escrowBalance) {
     problems.push({
