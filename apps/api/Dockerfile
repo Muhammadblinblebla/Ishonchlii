@@ -46,8 +46,11 @@ COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/shared/package.json packages/shared/
 COPY --from=builder /app/apps/api/dist apps/api/dist
 COPY --from=builder /app/apps/api/package.json apps/api/
-# Migratsiyalar — deploy paytida qo'llash uchun
+# Migratsiyalar va prisma sozlamasi — deploy paytida qo'llash uchun.
+# `prisma.config.ts` `prisma/` papkasining ICHIDA emas, shuning uchun
+# alohida ko'chiriladi — busiz `migrate deploy` sozlamani topa olmaydi.
 COPY --from=builder /app/apps/api/prisma apps/api/prisma
+COPY --from=builder /app/apps/api/prisma.config.ts apps/api/
 
 # root bo'lmagan foydalanuvchi
 RUN addgroup -g 1001 -S nodejs && adduser -S escrow -u 1001 \
