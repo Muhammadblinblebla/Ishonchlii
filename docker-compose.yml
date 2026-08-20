@@ -60,19 +60,12 @@ services:
     volumes:
       - api-storage:/app/apps/api/storage
 
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    container_name: escrowuz-web
-    profiles: ['full']
-    restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001
-    ports:
-      - '3000:3000'
-    depends_on:
-      - api
+  # WEB uchun konteyner YO'Q — frontend Vercel'da turadi (qarang: vercel.json).
+  # Ilgari bu yerda `apps/web/Dockerfile` ga ishora qiluvchi `web` xizmati
+  # bor edi, lekin bunday fayl hech qachon yozilmagan: `docker compose
+  # --profile full up` shu joyda yiqilardi.
+  #
+  # Lokalda frontend kerak bo'lsa:  npm run dev:web
 
 volumes:
   redis-data:

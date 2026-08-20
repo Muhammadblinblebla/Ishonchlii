@@ -43,6 +43,25 @@ step "Vercel build bosqichi"
 ( cd apps/web && NEXT_PUBLIC_API_URL="https://api.example.com" npx next build ) \
   >"$DIR/.last.log" 2>&1 && ok "web build" || { bad "web build"; tail -25 "$DIR/.last.log" | sed 's/^/      /'; }
 
+# ─── Dev bog'liqliklarni tashlash ────────────────────────────────────────────
+#
+# Dockerfile aynan shuni qiladi. Bu bosqich MUHIM: `typescript`, `tsx`,
+# `vitest` shu yerda yo'qoladi. Agar production yo'lidagi biror narsa
+# ulardan biriga tayanib qolgan bo'lsa — xato AYNAN shu yerda chiqadi,
+# Railway'da konteyner ko'tarilmay qolganda emas.
+step "Dev bog'liqliklar tashlanmoqda (Dockerfile kabi)"
+run "npm prune --omit=dev"  npm prune --omit=dev
+
+# `prisma.config.ts` — TypeScript fayli, lekin `typescript` endi yo'q.
+# Prisma uni o'z yuklovchisi (c12 → jiti) bilan o'qiydi. `validate`
+# bazaga ULANMAYDI, ya'ni sozlama va sxema o'qilishini toza tekshiradi.
+# Bu ishlamasa `migrate deploy` ham ishlamaydi — ya'ni deploy paytida
+# migratsiyalar qo'llanmay qoladi.
+step "Migratsiya vositasi prune'dan keyin ishlaydimi"
+( cd apps/api && npx prisma validate --schema prisma/schema.prisma ) \
+  >"$DIR/.last.log" 2>&1 && ok "prisma.config.ts o'qildi, sxema haqiqiy" \
+  || { bad "prisma validate"; tail -25 "$DIR/.last.log" | sed 's/^/      /'; }
+
 step "Production serverini ko'tarish"
 cd "$DIR/apps/api"
 export NODE_ENV=production API_PORT=3099

@@ -17,17 +17,13 @@ import { afterAll, describe, expect, it } from 'vitest';
 const execFileAsync = promisify(execFile);
 
 const apiRoot = fileURLToPath(new URL('..', import.meta.url));
-const envPath = fileURLToPath(new URL('../../../.env', import.meta.url));
 
-// Vaqtinchalik yuklovchi: .env ni o'qiydi, keyin sozlamalarni almashtirib
-// `config/env.ts` ni import qiladi.
+// Vaqtinchalik yuklovchi: `config/env.ts` ni import qiladi, xolos.
+// Sozlamalar unga MUHIT orqali beriladi (pastdagi `probe`), fayldan emas.
 const loaderPath = `${apiRoot}.env-guard-probe.ts`;
 writeFileSync(
   loaderPath,
-  `process.loadEnvFile(${JSON.stringify(envPath)});
-const overrides = JSON.parse(process.argv[2] ?? '{}');
-for (const [k, v] of Object.entries(overrides)) process.env[k] = String(v);
-await import('./src/config/env.js');
+  `await import('./src/config/env.js');
 console.log('STARTED');
 `,
 );
@@ -40,6 +36,41 @@ afterAll(() => {
   }
 });
 
+/**
+ * Har bir probe uchun TO'LIQ va MUSTAQIL sozlama to'plami.
+ *
+ * ⚠️ Nega bu shunchalik muhim: ilgari testlar faqat FARQ qiladigan
+ * qiymatni berardi, qolgani ishlab chiquvchining `.env` faylidan kelardi.
+ * Natijada testlar lokalda o'tib, CI'da yiqilardi — u yerda `.env` YO'Q,
+ * ya'ni masalan `CHECKOUT_UZ_API_KEY` bo'sh bo'lib, "sozlamalar to'liq
+ * emas" himoyasi oldinroq ishlab ketardi va test sinamoqchi bo'lgan
+ * himoyaga umuman yetib bormasdi.
+ *
+ * Shu sababli probe muhitni MEROS QILIB OLMAYDI — quyidagi to'plam
+ * (ustiga test bergan o'zgarishlar) uning butun dunyosi.
+ */
+const BASE_ENV: Readonly<Record<string, string>> = {
+  NODE_ENV: 'development',
+  DATABASE_URL: 'postgresql://u:p@localhost:5432/escrowuz',
+  DIRECT_URL: 'postgresql://u:p@localhost:5432/escrowuz',
+  JWT_SECRET: 'A'.repeat(48),
+  JWT_REFRESH_SECRET: 'B'.repeat(48),
+  CREDENTIALS_SECRET: 'C'.repeat(48),
+  CORS_ORIGINS: 'http://localhost:3000',
+  PAYMENT_PROVIDER: 'mock',
+  // checkout.uz uchun "to'liq sozlangan" bazaviy holat — testlar kerakli
+  // bittasini bo'shatib, aynan o'sha himoyani sinaydi.
+  CHECKOUT_UZ_BASE_URL: 'https://api.checkout.uz',
+  CHECKOUT_UZ_API_KEY: 'test-api-key',
+  CHECKOUT_UZ_ENV: 'sandbox',
+  CHECKOUT_UZ_WEBHOOK_URL: 'https://example.uz/webhooks/checkout-uz',
+  CLICK_SERVICE_ID: '',
+  CLICK_MERCHANT_ID: '',
+  CLICK_SECRET_KEY: '',
+  CLICK_MERCHANT_USER_ID: '',
+  EMAIL_DRIVER: 'log',
+};
+
 interface ProbeResult {
   started: boolean;
   output: string;
@@ -47,11 +78,18 @@ interface ProbeResult {
 
 async function probe(overrides: Record<string, string>): Promise<ProbeResult> {
   try {
-    const { stdout, stderr } = await execFileAsync(
-      'npx',
-      ['tsx', loaderPath, JSON.stringify(overrides)],
-      { cwd: apiRoot, timeout: 60_000 },
-    );
+    const { stdout, stderr } = await execFileAsync('npx', ['tsx', loaderPath], {
+      cwd: apiRoot,
+      timeout: 60_000,
+      // `env` berilgani uchun bola jarayon ota muhitini MEROS OLMAYDI.
+      // PATH va HOME `npx`/`tsx` ishlashi uchun kerak, qolganini biz beramiz.
+      env: {
+        PATH: process.env['PATH'] ?? '',
+        HOME: process.env['HOME'] ?? '',
+        ...BASE_ENV,
+        ...overrides,
+      },
+    });
     return { started: stdout.includes('STARTED'), output: stdout + stderr };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string };
@@ -179,13 +217,17 @@ describe('Auth sozlamalari', () => {
   });
 
   it('production muhitida dev sirlari BLOKLANADI', async () => {
+    // `dev-only` prefiksi ATAYLAB shu yerda yoziladi. Ilgari u ishlab
+    // chiquvchining `.env` faylidan kelardi — ya'ni test o'z shartini
+    // o'zi qo'ymasdi va boshqa mashinada ma'nosini yo'qotardi.
     const r = await probe({
       NODE_ENV: 'production',
+      JWT_SECRET: `dev-only-${'x'.repeat(40)}`,
       PAYMENT_PROVIDER: 'checkout_uz',
       CHECKOUT_UZ_ENV: 'production',
       CHECKOUT_UZ_WEBHOOK_URL: 'https://example.uz/w',
     });
-    expect(r.started).toBe(false);
+    expect(r.started, r.output).toBe(false);
     expect(r.output).toContain('development sirlari');
   });
 

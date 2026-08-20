@@ -22,6 +22,9 @@ Ikkalasida ham bepul tarif yetarli. Kredit karta talab qilinmaydi.
 | Raqamli mahsulot — **fayl yuklash** | ❌ hali yo'q |
 | Nizolarni avtomatik hal qilish | ✅ ishlaydi |
 | Hamyonda 30 soatlik muzlatish | ✅ ishlaydi |
+| Qo'llab-quvvatlash (rasm bilan) | ✅ ishlaydi |
+| Admin paneli | ✅ ishlaydi |
+| Fon vazifalari | ✅ ishlaydi |
 | Click to'lovi | ⬜ kalitlar kerak |
 | Sotuvchiga pul chiqarish | ⚠️ qo'lda — pastga qarang |
 
@@ -49,16 +52,21 @@ Hozirgi Supabase loyihasi `ap-northeast-1` (Tokio) da. O'lchadim:
 | Oddiy `SELECT 1` | ~1 000 ms |
 | Umumiy internet (google.com) | ~137 ms |
 
-Bu haqiqiy foydalanuvchiga shunday tegadi:
+Kod tomonidan qilinadigan narsa qilib bo'lindi (avtorizatsiya keshi,
+so'rovlarni parallellashtirish) — natija:
 
 ```
-/auth/login   2.15 s
-/deals        2.01 s
-/wallet       2.01 s
+              oldin    keyin
+/auth/me      1.77 s → 0.83 s
+/deals        1.77 s → 0.84 s
+/wallet       2.06 s → 1.00 s
 ```
 
-Har bosishda **2 soniya** kutish. Frankfurt (`eu-central-1`) da bu
-~200 ms bo'lardi — 8-10 barobar tez.
+Qolgan **~0.9 soniya — bazaga bitta muqarrar so'rov**. Uni kod bilan
+kamaytirib bo'lmaydi: har so'rov Tokiogacha borib qaytadi.
+
+Frankfurt (`eu-central-1`) da bu ~0.15 soniya bo'lardi — ya'ni sayt
+yana **6 barobar** tez bo'ladi.
 
 Hozir baza deyarli bo'sh, ko'chirish oson: yangi Supabase loyihasi
 yarating, `DATABASE_URL` va `DIRECT_URL` ni bering — men migratsiyalarni
@@ -98,7 +106,17 @@ git push -u origin main
 1. <https://railway.app> → GitHub bilan kiring
 2. **New Project → Deploy from GitHub repo** → `escrowuz` ni tanlang
 3. **Settings → Root Directory**: bo'sh qoldiring (monorepo ildizi)
-4. **Settings → Config as code**: `apps/api/railway.json`
+4. **Settings → Config as code**: `railway.json`
+
+> Fayl **ildizda** turadi, `apps/api/` da emas. Railway config faylini
+> faqat build kontekstining ildizidan qidiradi — noto'g'ri manzil bersangiz
+> uni umuman topmaydi, Dockerfile o'rniga Nixpacks'ga o'tadi va build
+> `prisma generate` da yiqiladi.
+
+`railway.json` ichidagi `startCommand` **mutlaq yo'l** bilan yozilgan
+(`cd /app/apps/api && ...`). Buni nisbiy qilib qisqartirmang: Dockerfile'ning
+WORKDIR'i allaqachon `/app/apps/api`, ya'ni `cd apps/api` konteyner
+ichida mavjud bo'lmagan papkani qidiradi va server umuman ko'tarilmaydi.
 
 ### Muhit o'zgaruvchilari (Variables)
 
@@ -108,7 +126,10 @@ Bularni **qo'lda** kiriting — hech qaysi biri kodda yo'q:
 NODE_ENV=production
 
 # Supabase — .env dagi bilan bir xil
-DATABASE_URL=postgresql://postgres.tsomhnmqwgipaupnyxda:<PAROL>@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
+# ⚠️ Oxiridagi parametrlar SHART: connection_limit=1 bo'lsa fon vazifalari
+#    va foydalanuvchi so'rovlari bitta ulanish uchun navbatga turadi va
+#    savdo o'rtasida timeout chiqadi.
+DATABASE_URL=postgresql://postgres.tsomhnmqwgipaupnyxda:<PAROL>@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=10&pool_timeout=20
 DIRECT_URL=postgresql://postgres.tsomhnmqwgipaupnyxda:<PAROL>@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres
 
 # YANGI sirlar yarating — dev'dagilarni ISHLATMANG.
@@ -251,25 +272,29 @@ ko'rinadimi.
 
 ---
 
-## ⚠️ Deploy'dan OLDIN bilishingiz kerak
+## Fon vazifalari — o'zi ishlaydi
 
-Quyidagilar hali yozilmagan. Haqiqiy pul bilan ishlatishdan oldin
-tugallanishi kerak:
+Server ko'tarilganda `startScheduler` ishga tushadi. Qo'lda hech narsa
+qilish shart emas, cron sozlash ham kerak emas.
 
-| Bo'shliq | Oqibati |
+| Vazifa | Nima qiladi |
 |---|---|
-| **Admin panel yo'q** | Nizo ochilsa pul muzlab qoladi, chiqarish yo'li YO'Q |
-| **Fon vazifalari yo'q** | 48 soatlik to'lov muddati va 7 kunlik auto-release ishlamaydi |
-| **Yo'qolgan webhook qoplanmaydi** | Deploy paytida kelgan to'lov xabari yo'qoladi → xaridor to'lagan, savdo `EXPIRED` bo'ladi |
+| `expire-unpaid` | 48 soat to'lanmagan savdoni yopadi |
+| `reconcile-payments` | **Yo'qolgan webhook'ni topadi** — pastga qarang |
+| `auto-release` | Muddati o'tgan savdoda pulni sotuvchiga o'tkazadi |
+| `release-wallet-holds` | 30 soatlik muzlatishni ochadi |
+| `auto-resolve-disputes` | Nizoni faktlar asosida o'zi hal qiladi |
+| `auto-resolve-mismatches` | Summasi mos kelmagan to'lovni hal qiladi |
+| `retry-failed-webhooks` | Qayta urinadi |
+| `send-notifications` / `send-reminders` | Xatlarni yuboradi |
 
-Uchinchisi deploy uchun alohida muhim: **har bir yangi deploy paytida
-server ~30 soniya o'chiq bo'ladi.** O'sha oynada kelgan webhook butunlay
-yo'qolishi mumkin. `reconcile-payments` fon vazifasi uni topib beradi.
+**`reconcile-payments` nima uchun muhim:** har bir yangi deploy paytida
+server ~30 soniya o'chiq bo'ladi. O'sha oynada Click yuborgan "to'lov
+keldi" xabari yo'qolishi mumkin — xaridor to'lagan bo'lardi, savdo esa
+`AWAITING_PAYMENT` da qolib ketardi. Bu vazifa to'lovni **provayderdan
+qayta so'rab** topadi va savdoni to'g'ri holatga o'tkazadi.
 
-Shu sababli **avval 7-bosqichni (fon vazifalari) tugatishni tavsiya qilaman**,
-keyin deploy qilish. Aks holda birinchi haqiqiy to'lovda pul "yo'qolib"
-qolishi mumkin — texnik jihatdan Supabase'da turadi, lekin savdo uni
-ko'rmaydi.
+Ya'ni webhook yo'qolsa ham pul yo'qolmaydi — kechikadi, xolos.
 
 ---
 

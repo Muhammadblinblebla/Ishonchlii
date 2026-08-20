@@ -10,10 +10,13 @@
  * Shuning uchun bitta tekshiruv qilamiz va muammo bo'lsa darhol to'xtaymiz.
  */
 
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export async function setup(): Promise<void> {
-  process.loadEnvFile(fileURLToPath(new URL('../../../../.env', import.meta.url)));
+  // CI'da `.env` yo'q — o'zgaruvchilar muhitdan keladi. Qarang: helpers/env.ts
+  const envPath = fileURLToPath(new URL('../../../../.env', import.meta.url));
+  if (existsSync(envPath)) process.loadEnvFile(envPath);
   process.env['NODE_ENV'] = 'test';
 
   // Bazaga tegmaydigan testlarni (to'lov provayderi, sxema mosligi) baza

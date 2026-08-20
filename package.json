@@ -33,13 +33,14 @@
   },
   "//overrides": [
     "Next.js o'z ichiga eskirgan postcss va sharp'ni qadab qo'ygan.",
-    "npm audit yechim sifatida next@9.3.3 ga tushirishni taklif qiladi \u2014 mantiqsiz.",
+    "npm audit yechim sifatida next@9.3.3 ga tushirishni taklif qiladi — mantiqsiz.",
     "Shuning uchun xavfsiz versiyalar majburlanadi.",
     "Next yangilanib, o'zi yangi versiyalarga o'tgach bu bo'limni olib tashlash mumkin."
   ],
   "overrides": {
     "postcss": "^8.5.25",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "nanoid": "^3.3.18"
   },
   "allowScripts": {
     "@prisma/client@6.19.3": true,

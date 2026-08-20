@@ -101,12 +101,13 @@ borguncha vaqt tugaydi.
 | 11. Kalit so'z + raqamli mahsulot + chat + 30 soatlik muzlatish | ✅ |
 | 12. Nizolarni avtomatik hal qilish (adminsiz) | ✅ |
 
-**157 test bazasiz o'tadi** (63 API + 94 sof mantiq), typecheck toza,
+**227 test bazasiz o'tadi** (120 API + 107 sof mantiq), typecheck toza,
 ikkala ilova ham build bo'ladi.
 
-⚠️ Bazaga tegadigan testlar (deal-flow, ledger, chat) hozir ishonchli
-yurmayapti — Supabase Tokioda va har so'rov ~1 soniya ketmoqda, natijada
-90 soniyalik timeout'lar chiqadi. Region ko'chirilgach qayta yurgizish kerak.
+⚠️ Bazaga tegadigan testlar (deal-flow, ledger, chat) lokalda ishonchsiz
+yuradi — Supabase Tokioda va har so'rov ~1 soniya ketmoqda, natijada
+90 soniyalik timeout'lar chiqadi. **CI'da bunday muammo yo'q**: u o'z
+Postgres konteynerida ishlaydi, ya'ni tarmoq kechikishi nolga yaqin.
 
 ### Ma'lum bo'shliqlar
 
@@ -342,17 +343,22 @@ Bu **uch qavatda** majburlanadi:
            0  ✓
 ```
 
-### Tasdiqlandi (komissiya 3%)
+### Tasdiqlandi (xizmat haqqi 1%)
 
 ```
  -10 000 000  platform:escrow
  +10 000 000  platform:escrow_liability
  -10 000 000  user:<sotuvchi>:pending
-  +9 700 000  user:<sotuvchi>:available
-    +300 000  platform:revenue
+  +9 900 000  user:<sotuvchi>:holding      ← available EMAS
+    +100 000  platform:revenue
  ───────────
            0  ✓
 ```
+
+Pul `available` ga emas, **`holding`** ga tushadi: savdo yakunlandi, pul
+sotuvchiniki, lekin 30 soat muzlatiladi. `release-wallet-holds` fon
+vazifasi muddat o'tgach uni `available` ga o'tkazadi — shundan keyingina
+yechib olsa bo'ladi.
 
 ---
 
@@ -363,11 +369,23 @@ Barcha qoidalar **bitta faylda**: `packages/shared/src/commission-policy.ts`.
 `amount_tiyin` — kelishilgan **tovar narxi**. Xaridor to'laydigan summa
 `commission_payer` ga bog'liq:
 
-| `commission_payer` | Xaridor to'laydi | Sotuvchi oladi | Platforma |
-|---|---:|---:|---:|
-| `seller` | 10 000 000 | 9 700 000 | 300 000 |
-| `buyer` | 10 300 000 | 10 000 000 | 300 000 |
-| `split` | 10 150 000 | 9 850 000 | 300 000 |
+Ikkita alohida foiz bor va ular **bir xil narsa emas**:
+
+| | Foiz | Kimga tushadi |
+|---|---:|---|
+| Xizmat haqqi (`rateBps`) | 1% | Platformaga |
+| To'lov tizimi (`providerFeeBps`) | 1% | **Click'ga** — bizga tushmaydi |
+
+Provayder foizi xaridor to'lovi **ustiga** qo'shiladi. Aks holda escrowga
+kerakli summa to'liq tushmasdi va farqni platforma o'z hisobidan qoplardi.
+
+100 000 so'mlik savdo (tiyinda):
+
+| `commission_payer` | Xaridor to'laydi | Escrowga tushadi | Sotuvchi oladi | Platforma | Click |
+|---|---:|---:|---:|---:|---:|
+| `seller` (standart) | 10 101 100 | 10 000 000 | 9 900 000 | 100 000 | 101 100 |
+| `buyer` | 10 202 100 | 10 100 000 | 10 000 000 | 100 000 | 102 100 |
+| `split` | 10 151 600 | 10 050 000 | 9 950 000 | 100 000 | 101 600 |
 
 Yaxlitlash qoldig'i **xaridorga** beriladi (`remainderTo: 'buyer'`).
 

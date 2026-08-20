@@ -11,6 +11,10 @@ env:
   DIRECT_URL: postgresql://postgres:postgres@localhost:5432/escrowuz_test
   JWT_SECRET: ci-only-secret-not-used-anywhere-else-0000000000
   JWT_REFRESH_SECRET: ci-only-refresh-secret-not-used-elsewhere-1111
+  # Akkaunt ma'lumotlari va chat shu kalit bilan shifrlanadi. Usiz
+  # `config/env.ts` ishga tushishda `process.exit(1)` qiladi va BARCHA
+  # testlar boshlanmasdan yiqiladi.
+  CREDENTIALS_SECRET: ci-only-credentials-key-not-used-elsewhere-2222
   NODE_ENV: test
   PAYMENT_PROVIDER: mock
 
@@ -51,8 +55,10 @@ jobs:
 
       - run: npm ci
 
+      # `npm audit --audit-level=high` o'rniga: bir xil qat'iylik, lekin
+      # ataylab kechirilgan advisory'lar sabab va muddat bilan yozilgan.
       - name: Zaifliklar tekshiruvi
-        run: npm audit --audit-level=high
+        run: node scripts/audit-gate.mjs
 
       - run: npm run db:generate
 
@@ -61,6 +67,17 @@ jobs:
 
       - name: Tiplar tekshiruvi
         run: npm run typecheck
+
+      # Web'ni ALOHIDA build qilamiz. `next build` o'zi tip tekshiruvini
+      # bajaradi — ya'ni frontend xatosi Vercel'da emas, shu yerda chiqadi.
+      # `npm run typecheck` web'ni qamramaydi, chunki Next o'z tiplarini
+      # build paytida generatsiya qiladi.
+      - name: Web build (Vercel'ni takrorlaydi)
+        run: |
+          npm run build --workspace=@escrowuz/shared
+          npm run build --workspace=@escrowuz/web
+        env:
+          NEXT_PUBLIC_API_URL: https://api.example.com
 
       - name: Testlar
         run: npm test
