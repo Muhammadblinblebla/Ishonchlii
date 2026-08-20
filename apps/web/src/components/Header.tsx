@@ -18,12 +18,10 @@ export function Header() {
         { href: '/deals/find', label: 'Sotib olish' },
         { href: '/deals/new', label: 'Sotish' },
         { href: '/wallet', label: uz.nav.wallet },
-        ...(user.role === 'admin'
-          ? [
-              { href: '/admin/disputes', label: uz.nav.admin },
-              { href: '/admin/payouts', label: 'To\'lovlar' },
-            ]
-          : []),
+        { href: '/support', label: 'Yordam' },
+        // Admin uchun bitta havola — qolganlari boshqaruv panelida.
+        // Menyuga beshta havola qo'shilsa telefonda sig'masdi.
+        ...(user.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
       ]
     : [];
 

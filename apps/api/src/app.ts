@@ -14,6 +14,8 @@ import { webhookRoutes } from './webhooks/webhooks.routes.js';
 import { clickRoutes } from './webhooks/click.routes.js';
 import { mockPayRoutes } from './dev/mock-pay.routes.js';
 import { adminRoutes } from './admin/admin.routes.js';
+import { supportRoutes } from './support/support.routes.js';
+import { adminSupportRoutes } from './support/admin-support.routes.js';
 import { idempotencyPlugin } from './plugins/idempotency.plugin.js';
 import { authPlugin } from './plugins/auth.plugin.js';
 
@@ -182,6 +184,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(clickRoutes);
   await app.register(mockPayRoutes);
   await app.register(adminRoutes);
+  await app.register(supportRoutes);
+  await app.register(adminSupportRoutes);
 
   return app;
 }

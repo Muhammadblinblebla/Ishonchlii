@@ -12,7 +12,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Supabase: pooled ulanish (:6543) — ilova ish vaqtida shuni ishlatadi
   url       = env("DATABASE_URL")
   // Supabase: to'g'ridan-to'g'ri ulanish (:5432) — migratsiyalar uchun.
@@ -98,6 +98,16 @@ enum DisputeResolution {
   split
 }
 
+/// Qo'llab-quvvatlash murojaatining holati.
+enum SupportStatus {
+  /// Foydalanuvchi yozdi, admin hali javob bermadi
+  open
+  /// Admin javob berdi, foydalanuvchi javobini kutmoqda
+  answered
+  /// Yopilgan
+  closed
+}
+
 enum NotificationStatus {
   pending
   sent
@@ -129,17 +139,19 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
 
-  dealsAsBuyer     Deal[]         @relation("BuyerDeals")
-  dealsAsSeller    Deal[]         @relation("SellerDeals")
+  dealsAsBuyer     Deal[]           @relation("BuyerDeals")
+  dealsAsSeller    Deal[]           @relation("SellerDeals")
   dealEvents       DealEvent[]
-  disputesOpened   Dispute[]      @relation("DisputeOpener")
-  disputesResolved Dispute[]      @relation("DisputeResolver")
+  disputesOpened   Dispute[]        @relation("DisputeOpener")
+  disputesResolved Dispute[]        @relation("DisputeResolver")
   disputeFiles     DisputeFile[]
   payouts          Payout[]
   refreshTokens    RefreshToken[]
   notifications    Notification[]
   messages         Message[]
   walletHolds      WalletHold[]
+  supportTickets   SupportTicket[]
+  supportMessages  SupportMessage[]
 
   @@index([deletedAt])
   @@map("users")
@@ -236,16 +248,17 @@ model Deal {
   buyer  User? @relation("BuyerDeals", fields: [buyerId], references: [id])
   seller User  @relation("SellerDeals", fields: [sellerId], references: [id])
 
-  events        DealEvent[]
-  ledgerEntries LedgerEntry[]
-  shipments     Shipment[]
-  handover      AccountHandover?
-  content       DigitalContent?
-  messages      Message[]
-  holds         WalletHold[]
-  disputes      Dispute[]
-  invoices      Invoice[]
-  notifications Notification[]
+  events         DealEvent[]
+  ledgerEntries  LedgerEntry[]
+  shipments      Shipment[]
+  handover       AccountHandover?
+  content        DigitalContent?
+  messages       Message[]
+  holds          WalletHold[]
+  supportTickets SupportTicket[]
+  disputes       Dispute[]
+  invoices       Invoice[]
+  notifications  Notification[]
 
   @@index([buyerId, status])
   @@index([sellerId, status])
@@ -390,10 +403,10 @@ model DigitalContent {
   payloadCipher String @map("payload_cipher")
 
   /// `file` uchun ko'rsatiladigan ma'lumot (shifrlanmaydi — sir emas).
-  fileName  String? @map("file_name")
-  fileSize  Int?    @map("file_size")
+  fileName String? @map("file_name")
+  fileSize Int?    @map("file_size")
   /// Fayl TARKIBIDAN aniqlangan MIME (kengaytmadan emas).
-  fileMime  String? @map("file_mime")
+  fileMime String? @map("file_mime")
 
   /// Xaridor birinchi marta ochib ko'rgan vaqt — nizoda dalil.
   viewedAt  DateTime? @map("viewed_at")
@@ -533,7 +546,7 @@ model Invoice {
   provider String
 
   /// Provayder tomonidagi ID
-  externalId String @map("external_id")
+  externalId  String @map("external_id")
   /// Xaridor to'lashi KUTILAYOTGAN summa (tiyin). Webhook summasi
   /// shunga AYNAN teng bo'lishi shart, aks holda PAYMENT_MISMATCH (§5).
   amountTiyin BigInt @map("amount_tiyin")
@@ -585,8 +598,8 @@ model WebhookEvent {
   provider String
 
   /// Provayder bergan ID. Takror kelgan webhook shu yerda to'xtaydi.
-  externalId String @map("external_id")
-  payload    Json
+  externalId     String  @map("external_id")
+  payload        Json
   /// Imzo tekshiruvidan o'tdimi
   signatureValid Boolean @map("signature_valid")
 
@@ -650,6 +663,86 @@ model Notification {
   @@index([status, createdAt])
   @@index([userId, createdAt])
   @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QO'LLAB-QUVVATLASH
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Foydalanuvchining murojaati.
+///
+/// Savdo chatidan FARQLI: u yerda ikki foydalanuvchi yozishadi va matn
+/// shifrlanadi (akkaunt paroli o'tadi). Bu yerda foydalanuvchi PLATFORMAGA
+/// yozadi — admin o'qishi kerak, shuning uchun shifrlanmaydi.
+model SupportTicket {
+  id      String @id @default(uuid()) @db.Uuid
+  userId  String @map("user_id") @db.Uuid
+  subject String
+
+  status SupportStatus @default(open)
+
+  /// Murojaat qaysi savdoga tegishli (ixtiyoriy). Admin darhol kontekstni
+  /// ko'radi va foydalanuvchidan "qaysi savdo?" deb so'ramaydi.
+  dealId String? @map("deal_id") @db.Uuid
+
+  /// Navbatni saralash uchun: eng uzoq javob kutayotgani yuqorida turadi.
+  lastMessageAt DateTime  @default(now()) @map("last_message_at")
+  closedAt      DateTime? @map("closed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     User             @relation(fields: [userId], references: [id])
+  deal     Deal?            @relation(fields: [dealId], references: [id])
+  messages SupportMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([userId, createdAt])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id       String @id @default(uuid()) @db.Uuid
+  ticketId String @map("ticket_id") @db.Uuid
+
+  /// `null` = ADMIN yozdi. Admin ID'si saqlanmaydi: foydalanuvchi uchun
+  /// javob "qo'llab-quvvatlash xizmati" dan keladi, aniq xodimdan emas.
+  senderId String? @map("sender_id") @db.Uuid
+
+  body String @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket     SupportTicket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender     User?              @relation(fields: [senderId], references: [id])
+  attachment SupportAttachment?
+
+  @@index([ticketId, createdAt])
+  @@map("support_messages")
+}
+
+/// Xabarga biriktirilgan rasm (skrinshot).
+///
+/// ALOHIDA JADVALDA saqlanadi — xabarlar ro'yxatini o'qiganda rasm
+/// baytlari tortilmasin. Bitta 300 KB lik rasm 50 ta xabar bilan birga
+/// kelsa, sahifa 15 MB bo'lib ketardi.
+///
+/// Rasm BRAUZERDA siqiladi (eni 1600px, JPEG 80%) — server bunga
+/// ishonmaydi va hajmni qayta tekshiradi.
+model SupportAttachment {
+  id        String @id @default(uuid()) @db.Uuid
+  messageId String @unique @map("message_id") @db.Uuid
+
+  data      Bytes
+  mime      String
+  sizeBytes Int    @map("size_bytes")
+  fileName  String @map("file_name")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  message SupportMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("support_attachments")
 }
 
 /// `Idempotency-Key` header uchun. Takror so'rov DB'ga tegmasdan

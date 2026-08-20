@@ -69,6 +69,24 @@ const ROUTES: Array<{ method: 'GET' | 'POST'; url: string; what: string }> = [
   { method: 'POST', url: '/webhooks/click/prepare', what: 'Click Prepare' },
   { method: 'POST', url: '/webhooks/click/complete', what: 'Click Complete' },
 
+  // Qo'llab-quvvatlash — foydalanuvchi
+  { method: 'GET', url: '/support/subjects', what: 'tayyor mavzular' },
+  { method: 'GET', url: '/support/tickets', what: 'murojaatlarim' },
+  { method: 'POST', url: '/support/tickets', what: 'murojaat yozish' },
+  { method: 'GET', url: `/support/tickets/${UUID}`, what: 'murojaat tafsiloti' },
+  { method: 'POST', url: `/support/tickets/${UUID}/reply`, what: 'murojaatga javob' },
+  { method: 'GET', url: `/support/attachments/${UUID}`, what: 'rasm ko\'rish' },
+
+  // Qo'llab-quvvatlash — admin
+  { method: 'GET', url: '/admin/support/tickets', what: 'admin: murojaatlar' },
+  { method: 'GET', url: `/admin/support/tickets/${UUID}`, what: 'admin: murojaat' },
+  { method: 'POST', url: `/admin/support/tickets/${UUID}/reply`, what: 'admin: javob' },
+  { method: 'POST', url: `/admin/support/tickets/${UUID}/close`, what: 'admin: yopish' },
+
+  // Admin: savdo yozishmalari
+  { method: 'GET', url: '/admin/chats', what: 'admin: yozishmalar' },
+  { method: 'GET', url: `/admin/chats/${UUID}`, what: 'admin: bitta yozishma' },
+
   // Salomatlik
   { method: 'GET', url: '/health', what: 'health check' },
 ];

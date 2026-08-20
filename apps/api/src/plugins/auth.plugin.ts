@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { prisma } from '../db/prisma.js';
 import { ApiError } from '../lib/errors.js';
+import { type CachedUser, getCachedUser, setCachedUser } from './user-cache.js';
 import { verifyAccessToken } from '../lib/tokens.js';
 
 export interface AuthUser {
@@ -36,18 +37,30 @@ const plugin: FastifyPluginAsync = async (app) => {
     const payload = await verifyAccessToken(extractBearer(req));
 
     // Token amal qilsa ham, foydalanuvchi o'chirilgan bo'lishi mumkin.
-    // Access token 15 daqiqa yashaydi — bu oyna ochiq qolmasligi kerak.
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true, role: true, deletedAt: true },
-    });
+    //
+    // Bu tekshiruv KESHLANADI (30 soniya): busiz har bir so'rov bazaga
+    // borardi va uzoqdagi bazada bu har bosishga ~1 soniya qo'shardi.
+    // Xavfsizlikka ta'siri kichik — token baribir 15 daqiqa yashaydi.
+    const cached = getCachedUser(payload.sub);
 
-    if (!user || user.deletedAt) {
-      throw ApiError.unauthorized('Hisob mavjud emas');
+    let user: CachedUser | null;
+    if (cached !== undefined) {
+      user = cached;
+    } else {
+      const row = await prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, role: true, deletedAt: true },
+      });
+      user = !row || row.deletedAt ? null : { id: row.id, role: row.role };
+      // Manfiy natija ham keshlanadi: o'chirilgan hisob bilan qayta-qayta
+      // urinish bazani bekorga yuklamasin.
+      setCachedUser(payload.sub, user);
     }
 
-    // Rol tokendan emas, BAZADAN olinadi. Admin huquqi tortib olinganda
-    // eski token bilan yana admin bo'lib qolmasligi uchun.
+    if (!user) throw ApiError.unauthorized('Hisob mavjud emas');
+
+    // Rol tokendan emas, BAZADAN olinadi (keshlangan bo'lsa ham). Admin
+    // huquqi tortib olinganda eski token bilan admin bo'lib qolmaydi.
     req.user = { id: user.id, role: user.role };
   });
 

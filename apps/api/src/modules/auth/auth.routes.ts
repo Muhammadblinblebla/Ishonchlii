@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { prisma } from '../../db/prisma.js';
 import { ApiError } from '../../lib/errors.js';
+import { invalidateUser } from '../../plugins/user-cache.js';
 import { loginSchema, refreshSchema, registerSchema } from './auth.schemas.js';
 import * as authService from './auth.service.js';
 import type { AuthContext } from './auth.service.js';
@@ -58,6 +59,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
     await authService.logout(parsed.data.refreshToken);
     // Token topilmasa ham 204 — mavjudligini oshkor qilmaymiz.
+    // Keshni darhol tozalaymiz — chiqqan foydalanuvchi 30 soniya
+    // davomida hali ham "tirik" ko'rinmasin.
+    if (req.user) invalidateUser(req.user.id);
     return reply.code(204).send();
   });
 

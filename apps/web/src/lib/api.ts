@@ -244,6 +244,92 @@ export interface DealDetail {
   availableActions: string[];
 }
 
+export interface SupportAttachmentInfo {
+  id: string;
+  fileName: string;
+  mime: string;
+  sizeBytes: number;
+}
+
+export interface SupportTicketRow {
+  id: string;
+  subject: string;
+  status: 'open' | 'answered' | 'closed';
+  dealId: string | null;
+  lastMessageAt: string;
+  createdAt: string;
+  _count: { messages: number };
+}
+
+export interface SupportMessageRow {
+  id: string;
+  fromAdmin: boolean;
+  body: string;
+  createdAt: string;
+  attachment: SupportAttachmentInfo | null;
+}
+
+export interface SupportTicketDetail {
+  id: string;
+  subject: string;
+  status: 'open' | 'answered' | 'closed';
+  dealId: string | null;
+  createdAt: string;
+  messages: SupportMessageRow[];
+}
+
+export interface AdminSupportTicketRow extends SupportTicketRow {
+  user: { id: string; fullName: string; email: string };
+}
+
+export interface AdminSupportTicketDetail {
+  id: string;
+  subject: string;
+  status: 'open' | 'answered' | 'closed';
+  createdAt: string;
+  user: { id: string; fullName: string; email: string; phone: string | null; createdAt: string };
+  deal: {
+    id: string;
+    title: string;
+    status: DealStatus;
+    dealType: DealType;
+    amountTiyin: string;
+    keyword: string;
+  } | null;
+  messages: SupportMessageRow[];
+}
+
+export interface AdminChatRow {
+  id: string;
+  title: string;
+  status: DealStatus;
+  dealType: DealType;
+  amountTiyin: string;
+  updatedAt: string;
+  buyer: { id: string; fullName: string; email: string } | null;
+  seller: { id: string; fullName: string; email: string };
+  _count: { messages: number };
+}
+
+export interface AdminChatDetail {
+  deal: {
+    id: string;
+    title: string;
+    status: DealStatus;
+    dealType: DealType;
+    buyer: { id: string; fullName: string; email: string } | null;
+    seller: { id: string; fullName: string; email: string };
+  };
+  messages: Array<{
+    id: string;
+    senderId: string;
+    fromBuyer: boolean;
+    body: string;
+    createdAt: string;
+    readAt: string | null;
+  }>;
+}
+
 export interface AdminDispute {
   id: string;
   reason: string;
@@ -509,6 +595,36 @@ export const api = {
     },
   },
 
+  support: {
+    subjects(): Promise<{ subjects: string[] }> {
+      return request('/support/subjects');
+    },
+    tickets(): Promise<{ tickets: SupportTicketRow[] }> {
+      return request('/support/tickets');
+    },
+    ticket(id: string): Promise<{ ticket: SupportTicketDetail }> {
+      return request(`/support/tickets/${id}`);
+    },
+    create(input: {
+      subject: string;
+      body: string;
+      dealId?: string;
+      image?: { dataUrl: string; fileName: string };
+    }): Promise<{ ticket: { id: string } }> {
+      return request('/support/tickets', { method: 'POST', body: input });
+    },
+    reply(
+      id: string,
+      input: { body: string; image?: { dataUrl: string; fileName: string } },
+    ): Promise<{ ok: true }> {
+      return request(`/support/tickets/${id}/reply`, { method: 'POST', body: input });
+    },
+    /** Rasm manzili — `<img src>` uchun. Token bilan himoyalangan. */
+    attachmentUrl(id: string): string {
+      return `${API_URL}/support/attachments/${id}`;
+    },
+  },
+
   chat: {
     list(dealId: string): Promise<{ messages: ChatMessage[]; count: number }> {
       return request(`/deals/${dealId}/messages`);
@@ -519,6 +635,27 @@ export const api = {
   },
 
   admin: {
+    supportTickets(
+      status: 'open' | 'answered' | 'closed' | 'all' = 'open',
+    ): Promise<{ tickets: AdminSupportTicketRow[] }> {
+      return request(`/admin/support/tickets?status=${status}`);
+    },
+    supportTicket(id: string): Promise<{ ticket: AdminSupportTicketDetail }> {
+      return request(`/admin/support/tickets/${id}`);
+    },
+    supportReply(id: string, body: string): Promise<{ ok: true }> {
+      return request(`/admin/support/tickets/${id}/reply`, { method: 'POST', body: { body } });
+    },
+    supportClose(id: string): Promise<{ ok: true }> {
+      return request(`/admin/support/tickets/${id}/close`, { method: 'POST', body: {} });
+    },
+    chats(): Promise<{ deals: AdminChatRow[] }> {
+      return request('/admin/chats');
+    },
+    chat(dealId: string): Promise<AdminChatDetail> {
+      return request(`/admin/chats/${dealId}`);
+    },
+
     stats(): Promise<{
       openDisputes: number;
       paymentMismatches: number;

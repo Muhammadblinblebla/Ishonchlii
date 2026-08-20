@@ -7,3 +7,4 @@ export * from './accounts.js';
 export * from './i18n/uz.js';
 export * from './i18n/emails.js';
 export * from './dispute-policy.js';
+export * from './support.js';

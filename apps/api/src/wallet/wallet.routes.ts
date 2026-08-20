@@ -34,16 +34,22 @@ export const walletRoutes: FastifyPluginAsync = async (app) => {
 
   /** Balans — DOIM ledgerdan hisoblanadi (§4). */
   app.get('/wallet', async (req, reply) => {
-    const balance = await ledger.getBalance(req.user!.id);
-
-    // Muzlatilgan summalar qachon ochilishini ham qaytaramiz — foydalanuvchi
-    // "pulim qayerda?" deb so'ramasligi uchun aniq sana ko'rsatiladi.
-    const holds = await prisma.walletHold.findMany({
-      where: { userId: req.user!.id, releasedAt: null },
-      orderBy: { releaseAt: 'asc' },
-      select: { id: true, amountTiyin: true, releaseAt: true, dealId: true },
-      take: 50,
-    });
+    // Ikkala so'rov PARALLEL ketadi.
+    //
+    // Ketma-ket bo'lsa vaqt IKKI BAROBAR: baza uzoqda va har so'rov
+    // ~1 soniya yo'l vaqti oladi. Ular bir-biriga bog'liq emas, ya'ni
+    // kutishning hech qanday sababi yo'q.
+    const [balance, holds] = await Promise.all([
+      ledger.getBalance(req.user!.id),
+      // Muzlatilgan summalar qachon ochilishi — foydalanuvchi "pulim
+      // qayerda?" deb so'ramasligi uchun aniq sana ko'rsatiladi.
+      prisma.walletHold.findMany({
+        where: { userId: req.user!.id, releasedAt: null },
+        orderBy: { releaseAt: 'asc' },
+        select: { id: true, amountTiyin: true, releaseAt: true, dealId: true },
+        take: 50,
+      }),
+    ]);
 
     return reply.send(
       serializeBigInt({
