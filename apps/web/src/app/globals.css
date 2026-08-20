@@ -4,14 +4,48 @@
 
 @layer base {
   html {
+    /* iOS gorizontal holatda matnni o'zicha kattalashtiradi — bu layoutni buzadi */
     -webkit-text-size-adjust: 100%;
+    /* Sahifa ichidagi havolalarga o'tganda sarlavha header ostida qolmasin */
+    scroll-padding-top: 5rem;
   }
+
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
+    /*
+     * Gorizontal aylantirishni butunlay bloklaydi.
+     *
+     * `clip` — `hidden` dan yaxshiroq: u aylantirish konteyneri yaratmaydi,
+     * ya'ni `position: sticky` ishlashda davom etadi (header shunga bog'liq).
+     */
+    overflow-x: clip;
   }
-  /* Summalar uzunmas probel bilan ajratiladi — qator oxirida bo'linmasligi uchun */
+
+  /*
+   * Uzun email va karta raqamlari tor ekranda konteynerdan chiqib ketmasin.
+   * Faqat kerak bo'lganda bo'linadi — oddiy matn buzilmaydi.
+   */
+  .break-anywhere {
+    overflow-wrap: anywhere;
+  }
+
+  /* Summalar bir xil kenglikdagi raqamlar bilan — ustunda tekis turadi */
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * Harakatni kamaytirish so'ralgan bo'lsa animatsiyalarni o'chiramiz.
+   * Vestibulyar buzilishi bor odamlar uchun muhim.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
@@ -20,27 +54,61 @@
     @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5
            text-sm font-medium transition-colors
            disabled:cursor-not-allowed disabled:opacity-50;
+    /*
+     * Barmoq bilan bosish uchun eng kam o'lcham (Apple HIG: 44px).
+     * Kichikroq tugmalarga aniq tegish qiyin — ayniqsa yurgan holda.
+     */
+    min-height: 44px;
+    /* iOS Safari uzoq bosganda matnni tanlab olmasin */
+    -webkit-touch-callout: none;
   }
+
   .btn-primary {
     @apply btn bg-brand-600 text-white hover:bg-brand-700
            focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
            focus-visible:outline-brand-600;
   }
   .btn-secondary {
-    @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+    @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50
+           focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
+           focus-visible:outline-brand-600;
   }
   .btn-danger {
-    @apply btn border border-red-300 bg-white text-red-700 hover:bg-red-50;
+    @apply btn border border-red-300 bg-white text-red-700 hover:bg-red-50
+           focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
+           focus-visible:outline-red-600;
   }
+
   .card {
     @apply rounded-xl border border-slate-200 bg-white shadow-sm;
   }
+
   .label {
     @apply mb-1.5 block text-sm font-medium text-slate-700;
   }
+
   .input {
-    @apply w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm
+    @apply w-full rounded-lg border border-slate-300 px-3 py-2.5 text-slate-900
            placeholder:text-slate-400
            focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100;
+    /*
+     * 16px — iOS Safari kichikroq shriftli maydonga bosilganda sahifani
+     * avtomatik kattalashtiradi (zoom). Bu foydalanuvchini chalkashtiradi
+     * va layoutni buzadi. 16px bu xatti-harakatni to'xtatadi.
+     */
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  /* Tanlov tugmalari (rol, komissiya to'lovchisi) */
+  .choice {
+    @apply rounded-lg border px-3 py-3 text-sm transition-colors;
+    min-height: 44px;
+  }
+  .choice-on {
+    @apply choice border-brand-500 bg-brand-50 font-medium text-brand-800;
+  }
+  .choice-off {
+    @apply choice border-slate-300 bg-white text-slate-600 hover:bg-slate-50;
   }
 }

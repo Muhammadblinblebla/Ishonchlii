@@ -37,7 +37,7 @@ const auth = (u: TestUser): Record<string, string> => ({ authorization: `Bearer 
 
 /** Sotuvchiga yechib olinadigan mablag' beradi (haqiqiy savdo siklisiz). */
 async function giveBalance(userId: string, tiyin: bigint): Promise<void> {
-  await post({ legs: depositLegs(userId, tiyin, 'test'), idempotencyKey: `mp-d-${randomUUID()}` });
+  await post({ legs: depositLegs(userId, tiyin, 0n, 'test'), idempotencyKey: `mp-d-${randomUUID()}` });
   await post({
     legs: releaseLegs(userId, tiyin, tiyin, 0n),
     idempotencyKey: `mp-r-${randomUUID()}`,

@@ -76,7 +76,7 @@ export function renderHtml(message: EmailMessage): string {
 <body style="margin:0;padding:24px;background:#f8fafc;font-family:-apple-system,Segoe UI,Roboto,sans-serif">
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;margin:0 auto">
     <tr><td style="padding:0 0 16px">
-      <span style="font-size:18px;font-weight:600;color:#0f172a">Escrow.uz</span>
+      <span style="font-size:18px;font-weight:600;color:#0f172a">ishonchli<span style="color:#1a5cf5">.uz</span></span>
     </td></tr>
     <tr><td style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:32px">
       <h1 style="margin:0 0 16px;font-size:20px;color:#0f172a">${escapeHtml(message.heading)}</h1>
@@ -84,7 +84,7 @@ export function renderHtml(message: EmailMessage): string {
       ${button}
     </td></tr>
     <tr><td style="padding:16px 0;font-size:12px;color:#94a3b8;text-align:center">
-      Escrow.uz — pul faqat tovar yetib borgach o'tadi
+      ishonchli.uz — pul faqat siz tasdiqlaganingizdan keyin o'tadi
     </td></tr>
   </table>
 </body></html>`;
@@ -96,7 +96,7 @@ export function renderText(message: EmailMessage): string {
     message.actionLabel && message.actionUrl
       ? `\n\n${message.actionLabel}: ${message.actionUrl}`
       : '';
-  return `${message.heading}\n\n${message.body}${action}\n\n—\nEscrow.uz`;
+  return `${message.heading}\n\n${message.body}${action}\n\n—\nishonchli.uz`;
 }
 
 // ─── Drayverlar ──────────────────────────────────────────────────────────────

@@ -11,7 +11,10 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  CONTENT_KINDS,
   DEAL_STATUSES,
+  DEAL_TYPES,
+  DEAL_TYPE_RULES,
   TERMINAL_STATUSES,
   ESCROW_HELD_STATUSES,
   isTerminal,
@@ -41,6 +44,23 @@ describe('Prisma sxemasi shared paketiga mos', () => {
 
   it('CommissionPayer enumi siyosat tiplariga mos', () => {
     expect(enumValues('CommissionPayer')).toEqual(['buyer', 'seller', 'split']);
+  });
+
+  it('ContentKind enumi CONTENT_KINDS bilan aynan bir xil', () => {
+    expect(enumValues('ContentKind')).toEqual([...CONTENT_KINDS]);
+  });
+
+  it('DealType enumi DEAL_TYPES bilan aynan bir xil', () => {
+    // Ajralib ketsa: yangi tur bilan savdo yaratish ish vaqtida rad etiladi,
+    // yoki bazada shared bilmaydigan tur paydo bo'lib, auto-release muddati
+    // jimgina 7 kunga (standart) tushib qoladi.
+    expect(enumValues('DealType')).toEqual([...DEAL_TYPES]);
+  });
+
+  it('har bir savdo turi uchun qoida mavjud', () => {
+    for (const type of DEAL_TYPES) {
+      expect(DEAL_TYPE_RULES[type], type).toBeDefined();
+    }
   });
 
   it('bazadagi yakuniy holat triggeri TERMINAL_STATUSES bilan bir xil', () => {

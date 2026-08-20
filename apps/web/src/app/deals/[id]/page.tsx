@@ -2,8 +2,22 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { autoReleaseWarning, statusLabels, uz } from '@escrowuz/shared';
-import { whatHappensNow } from '@escrowuz/shared';
+import {
+  BUYER_ACCOUNT_CHECKLIST,
+  COMMISSION_POLICY,
+  SELLER_ACCOUNT_WARNING,
+  autoReleaseWarning,
+  chatOpenIn,
+  credentialsVisibleIn,
+  dealTypeRule,
+  statusLabelFor,
+  usesChat,
+  usesContent,
+  uz,
+  whatHappensNow,
+} from '@escrowuz/shared';
+import { DealChat } from '@/components/DealChat';
+import { ContentCard, ContentHandoverForm } from '@/components/DealContent';
 import { useRequireAuth } from '@/components/AuthProvider';
 import {
   ConfirmDialog,
@@ -84,7 +98,10 @@ export default function DealPage() {
 
   const { deal, role, buyer, seller, shipments, events, breakdown, availableActions } = data;
   const can = (action: string) => availableActions.includes(action);
-  const guidance = whatHappensNow(deal.status, role);
+  const guidance = whatHappensNow(deal.status, role, deal.dealType);
+  const typeRule = dealTypeRule(deal.dealType);
+  const viaChat = usesChat(deal.dealType);
+  const viaContent = usesContent(deal.dealType);
 
   return (
     <div className="space-y-6">
@@ -97,37 +114,36 @@ export default function DealPage() {
           ← {uz.nav.dashboard}
         </button>
         <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-          <h1 className="text-2xl font-semibold text-slate-900">{deal.title}</h1>
-          <StatusBadge status={deal.status} />
+          <div className="min-w-0">
+            <h1 className="break-anywhere text-xl font-semibold text-slate-900 sm:text-2xl">
+              {deal.title}
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {typeRule.label}
+              {deal.game && ` · ${deal.game}`}
+            </p>
+          </div>
+          <StatusBadge status={deal.status} dealType={deal.dealType} />
         </div>
       </div>
 
       <ErrorBox message={error} />
 
       {/* ── Progress qadamlari (§10) ─────────────────────────────────────── */}
-      <div className="card p-6">
-        <ProgressSteps status={deal.status} />
+      <div className="card p-4 sm:p-6">
+        <ProgressSteps status={deal.status} dealType={deal.dealType} />
       </div>
 
       {/* ── "Hozir kim nima qilishi kerak" (§10) ─────────────────────────── */}
-      <section className="card border-brand-200 bg-brand-50 p-6">
+      <section className="card border-brand-200 bg-brand-50 p-4 sm:p-6">
         <h2 className="text-lg font-semibold text-brand-900">{guidance.title}</h2>
         <p className="mt-1.5 text-sm leading-relaxed text-brand-800">{guidance.text}</p>
 
         <AutoReleaseTimer autoReleaseAt={deal.autoReleaseAt} status={deal.status} role={role} />
 
         {/* Amal tugmalari */}
-        <div className="mt-5 flex flex-wrap gap-2">
-          {can('accept') && role === 'buyer' && (
-            <button
-              className="btn-primary"
-              disabled={busy}
-              onClick={() => void run(() => api.deals.accept(deal.id, deal.version))}
-            >
-              {uz.deal.accept}
-            </button>
-          )}
-
+        {/* Mobilda tugmalar to'liq kenglikda: barmoq bilan aniq tegish uchun */}
+        <div className="mt-5 grid gap-2 sm:flex sm:flex-wrap">
           {deal.status === 'AWAITING_PAYMENT' && role === 'buyer' && (
             <button
               className="btn-primary"
@@ -143,13 +159,25 @@ export default function DealPage() {
             </button>
           )}
 
-          {can('ship') && role === 'seller' && (
+          {can('ship') && role === 'seller' && viaChat && (
+            <button
+              className="btn-primary"
+              disabled={busy}
+              onClick={() => void run(() => api.deals.markHandedOver(deal.id, deal.version))}
+            >
+              {typeRule.text.handoverAction}
+            </button>
+          )}
+          {can('ship') && role === 'seller' && viaContent && (
+            <ContentHandoverForm dealId={deal.id} version={deal.version} onDone={load} />
+          )}
+          {can('ship') && role === 'seller' && !viaChat && !viaContent && (
             <ShipForm dealId={deal.id} version={deal.version} onDone={load} />
           )}
 
           {can('confirm') && role === 'buyer' && (
             <button className="btn-primary" disabled={busy} onClick={() => setDialog('confirm')}>
-              {uz.deal.confirm}
+              {typeRule.text.confirmAction}
             </button>
           )}
 
@@ -165,36 +193,83 @@ export default function DealPage() {
         </div>
       </section>
 
+      {/* ── Chat (eFootball) ─────────────────────────────────────────────── */}
+      {viaChat && role !== 'admin' && chatOpenIn(deal.status) && (
+        <DealChat dealId={deal.id} canWrite />
+      )}
+
+      {/* ── Raqamli mahsulot ─────────────────────────────────────────────── */}
+      {/*
+        `credentialsVisibleIn` — server bilan BIR XIL ro'yxat. Pul xaridorga
+        qaytgan bo'lsa karta umuman ko'rsatilmaydi: tugmani bosib 403 olishdan
+        ko'ra, boshidanoq ko'rinmagani tushunarliroq.
+      */}
+      {viaContent && role === 'buyer' && data.content && credentialsVisibleIn(deal.status) && (
+        <ContentCard dealId={deal.id} />
+      )}
+
+      {/* Sotuvchi: topshirganini ko'radi, lekin qiymat qaytadan ko'rsatilmaydi */}
+      {viaContent && role === 'seller' && data.content && (
+        <section className="card p-4 sm:p-6">
+          <h2 className="font-semibold text-slate-900">{uz.digital.contentTitle}</h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Topshirilgan: {formatDate(data.content.createdAt)}
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            {data.content.viewedAt
+              ? `Xaridor ochdi: ${formatDate(data.content.viewedAt)}`
+              : 'Xaridor hali ochmadi.'}
+          </p>
+        </section>
+      )}
+
       {/* ── Summalar ─────────────────────────────────────────────────────── */}
-      <section className="card p-6">
+      <section className="card p-4 sm:p-6">
         <h2 className="font-semibold text-slate-900">Summalar</h2>
+        {/*
+          Xaridor to'lovidan boshlab pastga qarab taqsimlanadi — har bir tiyin
+          qayerga ketgani ko'rinib tursin. Bank komissiyasi ALOHIDA qator:
+          u platformaga tushmaydi va buni yashirish noto'g'ri bo'lardi.
+        */}
         <dl className="mt-4 space-y-3 text-sm">
           <Row label={uz.deal.amount} value={formatAmount(breakdown.amountTiyin)} />
-          <Row
-            label={`${uz.deal.commission} (${(deal.commissionBps / 100).toFixed(2)}%)`}
-            value={formatAmount(breakdown.commissionTiyin)}
-            muted
-          />
+
           <div className="border-t border-slate-100 pt-3">
             <Row
               label={uz.deal.buyerPays}
               value={formatAmount(breakdown.buyerPaysTiyin)}
               bold={role === 'buyer'}
             />
-            <div className="mt-3">
-              <Row
-                label={uz.deal.sellerReceives}
-                value={formatAmount(breakdown.sellerReceivesTiyin)}
-                bold={role === 'seller'}
-              />
-            </div>
           </div>
+
+          <div className="space-y-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs">
+            <Row
+              label={`Bank/karta komissiyasi (${(COMMISSION_POLICY.providerFeeBps / 100).toFixed(1)}%)`}
+              value={formatAmount(breakdown.providerFeeTiyin)}
+              muted
+            />
+            <Row
+              label={`Xizmat haqqi (${(deal.commissionBps / 100).toFixed(0)}%)`}
+              value={formatAmount(breakdown.commissionTiyin)}
+              muted
+            />
+          </div>
+
+          <Row
+            label={uz.deal.sellerReceives}
+            value={formatAmount(breakdown.sellerReceivesTiyin)}
+            bold={role === 'seller'}
+          />
         </dl>
+
+        <p className="mt-4 border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-500">
+          Bank komissiyasini to&apos;lov tizimi ushlab qoladi — platformaga tushmaydi.
+        </p>
       </section>
 
       {/* ── Tomonlar va yetkazish ────────────────────────────────────────── */}
       <div className="grid gap-6 sm:grid-cols-2">
-        <section className="card p-6">
+        <section className="card p-4 sm:p-6">
           <h2 className="font-semibold text-slate-900">Tomonlar</h2>
           <dl className="mt-4 space-y-3 text-sm">
             <Row
@@ -210,7 +285,7 @@ export default function DealPage() {
         </section>
 
         {shipments.length > 0 && (
-          <section className="card p-6">
+          <section className="card p-4 sm:p-6">
             <h2 className="font-semibold text-slate-900">Yetkazib berish</h2>
             {shipments.map((s) => (
               <dl key={s.id} className="mt-4 space-y-3 text-sm">
@@ -224,7 +299,7 @@ export default function DealPage() {
       </div>
 
       {/* ── Voqealar tarixi (§10) ────────────────────────────────────────── */}
-      <section className="card p-6">
+      <section className="card p-4 sm:p-6">
         <h2 className="font-semibold text-slate-900">{uz.deal.history}</h2>
         <ol className="mt-4 space-y-4">
           {events.map((event) => (
@@ -235,7 +310,7 @@ export default function DealPage() {
               />
               <div className="min-w-0 flex-1">
                 <p className="text-slate-900">
-                  {statusLabels[event.toStatus]}
+                  {statusLabelFor(event.toStatus, deal.dealType)}
                   {event.actor && (
                     <span className="text-slate-500"> — {event.actor.fullName}</span>
                   )}
@@ -252,15 +327,30 @@ export default function DealPage() {
       </section>
 
       {/* ── Tasdiqlash oynalari ──────────────────────────────────────────── */}
-      <ConfirmDialog
-        open={dialog === 'confirm'}
-        title={uz.deal.confirmDialogTitle}
-        text={uz.deal.confirmDialogText}
-        actionLabel={uz.deal.confirmDialogAction}
-        busy={busy}
-        onCancel={() => setDialog(null)}
-        onConfirm={() => void run(() => api.deals.confirm(deal.id, deal.version))}
-      />
+      {/*
+        O'yin akkauntida oddiy "ha/yo'q" oynasi YETARLI EMAS: xaridor parol va
+        pochtani almashtirmasdan tasdiqlasa, sotuvchi akkauntni tiklab olishi
+        mumkin va pul allaqachon o'tib bo'lgan bo'ladi. Shuning uchun alohida
+        ro'yxatli oyna.
+      */}
+      {viaChat ? (
+        <AccountConfirmDialog
+          open={dialog === 'confirm'}
+          busy={busy}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => void run(() => api.deals.confirm(deal.id, deal.version))}
+        />
+      ) : (
+        <ConfirmDialog
+          open={dialog === 'confirm'}
+          title={uz.deal.confirmDialogTitle}
+          text={uz.deal.confirmDialogText}
+          actionLabel={uz.deal.confirmDialogAction}
+          busy={busy}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => void run(() => api.deals.confirm(deal.id, deal.version))}
+        />
+      )}
 
       <ConfirmDialog
         open={dialog === 'cancel'}
@@ -296,12 +386,12 @@ function Row({
   mono?: boolean;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
       <dt className="text-slate-500">{label}</dt>
       <dd
-        className={`tabular text-right ${bold ? 'font-semibold text-slate-900' : muted ? 'text-slate-500' : 'text-slate-900'} ${
-          mono ? 'font-mono text-xs' : ''
-        }`}
+        className={`tabular break-anywhere ml-auto text-right ${
+          bold ? 'font-semibold text-slate-900' : muted ? 'text-slate-500' : 'text-slate-900'
+        } ${mono ? 'font-mono text-xs' : ''}`}
       >
         {value}
       </dd>
@@ -402,7 +492,7 @@ function ShipForm({
           minLength={3}
         />
       </Field>
-      <div className="flex gap-2">
+      <div className="grid gap-2 sm:flex">
         <button type="submit" className="btn-primary" disabled={busy}>
           {busy ? uz.common.loading : uz.common.save}
         </button>
@@ -411,6 +501,85 @@ function ShipForm({
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * O'yin akkaunti uchun tasdiqlash oynasi.
+ *
+ * Tugma ro'yxat belgilanmaguncha ishlamaydi. Bu shunchaki formallik emas:
+ * eng ko'p uchraydigan yo'qotish aynan "tekshirmasdan tasdiqlash" —
+ * xaridor pulini qaytarib ololmaydi, chunki savdo yakuniy holatga o'tgan.
+ */
+function AccountConfirmDialog({
+  open,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const [checked, setChecked] = useState(false);
+
+  // Oyna har ochilganda belgi tozalanadi — o'tgan safar bosilgani
+  // bu safar uchun hisoblanmasin.
+  useEffect(() => {
+    if (open) setChecked(false);
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center sm:pb-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-confirm-title"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-5 shadow-xl sm:p-6"
+      >
+        <h2 id="account-confirm-title" className="text-lg font-semibold text-slate-900">
+          {uz.deal.confirmDialogTitle}
+        </h2>
+
+        <p className="mt-2 text-sm leading-relaxed text-red-700">{uz.game.checklistWarning}</p>
+
+        <ol className="mt-4 space-y-2 text-sm text-slate-700">
+          {BUYER_ACCOUNT_CHECKLIST.map((item, i) => (
+            <li key={item} className="flex gap-2">
+              <span className="shrink-0 tabular-nums text-slate-400">{i + 1}.</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ol>
+
+        <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg bg-slate-50 p-3">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-brand-600"
+            checked={checked}
+            onChange={(e) => setChecked(e.target.checked)}
+          />
+          <span className="text-sm text-slate-900">{uz.game.checklistConfirm}</span>
+        </label>
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button type="button" className="btn-secondary" onClick={onCancel} disabled={busy}>
+            {uz.common.cancel}
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={onConfirm}
+            disabled={busy || !checked}
+          >
+            {busy ? 'Bajarilmoqda…' : uz.deal.confirmDialogAction}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -457,7 +626,7 @@ function DisputeForm({ dealId, onDone }: { dealId: string; onDone: () => Promise
           maxLength={2000}
         />
       </Field>
-      <div className="flex gap-2">
+      <div className="grid gap-2 sm:flex">
         <button type="submit" className="btn-danger" disabled={busy}>
           {busy ? uz.common.loading : uz.deal.disputeButton}
         </button>

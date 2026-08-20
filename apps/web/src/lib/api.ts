@@ -5,9 +5,32 @@
  * `number` ishlatilsa 2^53 dan katta summa jimgina buzilardi.
  */
 
-import type { DealStatus } from '@escrowuz/shared';
+import type { DealStatus, DealType } from '@escrowuz/shared';
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
+/**
+ * Backend manzili.
+ *
+ * Production'da `NEXT_PUBLIC_API_URL` build paytida kodga yoziladi va
+ * shu ishlatiladi.
+ *
+ * Sozlanmagan bo'lsa manzil SAHIFA OCHILGAN HOST'dan olinadi. Bu telefonda
+ * sinash uchun muhim: `http://192.168.1.7:3000` ga kirilganda "localhost"
+ * telefonning O'ZINI bildiradi va so'rov hech qayerga bormaydi — natijada
+ * forma jimgina qayta yuklanadi, xato ham ko'rinmaydi.
+ */
+function resolveApiUrl(): string {
+  const configured = process.env['NEXT_PUBLIC_API_URL'];
+  if (configured) return configured;
+
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+    return `${protocol}//${hostname}:3001`;
+  }
+
+  return 'http://localhost:3001';
+}
+
+const API_URL = resolveApiUrl();
 
 const ACCESS_KEY = 'escrowuz.access';
 const REFRESH_KEY = 'escrowuz.refresh';
@@ -153,10 +176,17 @@ export interface User {
 
 export interface Deal {
   id: string;
-  buyerId: string;
+  buyerId: string | null;
   sellerId: string;
   title: string;
   description: string;
+  dealType: DealType;
+  /** GAME_ACCOUNT uchun o'yin nomi. Hozircha faqat "eFootball". */
+  game: string | null;
+  /** Xaridor savdoni shu so'z orqali topadi. */
+  keyword: string;
+  /** Xaridor savdoni band qilgan vaqt. `null` = hali ochiq. */
+  claimedAt: string | null;
   /** Tiyinda, SATR. `BigInt(...)` bilan o'giriladi. */
   amountTiyin: string;
   commissionTiyin: string;
@@ -191,11 +221,25 @@ export interface DealDetail {
   shipments: Array<{ id: string; carrier: string; trackingNumber: string; shippedAt: string }>;
   events: DealEvent[];
   dispute: { id: string; reason: string; status: string } | null;
+  /**
+   * Raqamli mahsulot topshirilgani haqidagi FAKT — qiymatning O'ZI emas.
+   * U alohida `/content` so'rovi bilan, faqat xaridorga beriladi.
+   */
+  content: {
+    createdAt: string;
+    viewedAt: string | null;
+    kind: 'link' | 'text' | 'file';
+    fileName: string | null;
+    fileSize: number | null;
+  } | null;
   breakdown: {
     amountTiyin: string;
     buyerPaysTiyin: string;
     sellerReceivesTiyin: string;
     commissionTiyin: string;
+    /** To'lov tizimi ushlab qoladigan summa — bizga tushmaydi. */
+    providerFeeTiyin: string;
+    escrowTiyin: string;
   };
   availableActions: string[];
 }
@@ -222,10 +266,54 @@ export interface AdminDisputeDetail {
   breakdown: { amountTiyin: string; commissionTiyin: string };
 }
 
+export interface AdminPayout {
+  id: string;
+  amountTiyin: string;
+  destination: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  providerRef: string | null;
+  failReason: string | null;
+  createdAt: string;
+  processedAt: string | null;
+  user: { id: string; fullName: string; email: string; phone: string | null };
+}
+
+export interface WalletHold {
+  id: string;
+  dealId: string;
+  amountTiyin: string;
+  releaseAt: string;
+}
+
 export interface Wallet {
+  /** Yechib olish mumkin. */
   availableTiyin: string;
+  /** Savdo hali yakunlanmagan. */
   pendingTiyin: string;
+  /** Savdo yakunlandi, 30 soatlik muddat tugamagan. */
+  holdingTiyin: string;
   totalTiyin: string;
+  holds: WalletHold[];
+  nextReleaseAt: string | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName?: string;
+  mine: boolean;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface DigitalContentInfo {
+  kind: 'link' | 'text' | 'file';
+  value: string;
+  fileName: string | null;
+  fileSize: number | null;
+  fileMime: string | null;
+  viewedAt: string;
 }
 
 export interface Transaction {
@@ -299,8 +387,9 @@ export const api = {
       description: string;
       amountTiyin: string;
       commissionPayer: 'buyer' | 'seller' | 'split';
-      counterpartyEmail: string;
-      myRole: 'buyer' | 'seller';
+      dealType: DealType;
+      /** Xaridor savdoni shu so'z orqali topadi. */
+      keyword: string;
     }): Promise<{ deal: Deal }> {
       return request('/deals', {
         method: 'POST',
@@ -317,15 +406,25 @@ export const api = {
         buyerPaysTiyin: string;
         sellerReceivesTiyin: string;
         commissionTiyin: string;
+        providerFeeTiyin: string;
       };
     }> {
       return request(`/deals/preview?amountTiyin=${amountTiyin}&commissionPayer=${commissionPayer}`);
     },
 
-    accept(id: string, version: number): Promise<{ deal: Deal }> {
-      return request(`/deals/${id}/accept`, {
+    /** Kalit so'z bo'yicha ochiq savdoni topish (band qilinmaydi). */
+    find(keyword: string): Promise<{
+      deal: Deal & { seller: { id: string; fullName: string } };
+      breakdown: DealDetail['breakdown'];
+    }> {
+      return request('/deals/find', { method: 'POST', body: { keyword } });
+    },
+
+    /** Xaridor savdoni band qiladi va to'lovga o'tadi. */
+    claim(id: string): Promise<{ deal: Deal }> {
+      return request(`/deals/${id}/claim`, {
         method: 'POST',
-        body: { expectedVersion: version },
+        body: {},
         idempotencyKey: crypto.randomUUID(),
       });
     },
@@ -334,6 +433,7 @@ export const api = {
       return request(`/deals/${id}/pay`, { method: 'POST', body: {} });
     },
 
+    /** Jismoniy tovar: trek-raqam. */
     ship(
       id: string,
       data: { carrier: string; trackingNumber: string; note?: string },
@@ -344,6 +444,44 @@ export const api = {
         body: { ...data, expectedVersion: version },
         idempotencyKey: crypto.randomUUID(),
       });
+    },
+
+    /** eFootball: sotuvchi "akkauntni topshirdim" deb belgilaydi. */
+    markHandedOver(id: string, version: number): Promise<{ deal: Deal }> {
+      return request(`/deals/${id}/ship`, {
+        method: 'POST',
+        body: { expectedVersion: version },
+        idempotencyKey: crypto.randomUUID(),
+      });
+    },
+
+    /** Raqamli mahsulot: havola, matn yoki fayl. Server tomonda shifrlanadi. */
+    handoverContent(
+      id: string,
+      data: {
+        kind: 'link' | 'text' | 'file';
+        value: string;
+        fileName?: string;
+        fileSize?: number;
+        fileMime?: string;
+      },
+      version: number,
+    ): Promise<{ deal: Deal }> {
+      return request(`/deals/${id}/ship`, {
+        method: 'POST',
+        body: { ...data, expectedVersion: version },
+        idempotencyKey: crypto.randomUUID(),
+      });
+    },
+
+    /**
+     * Raqamli mahsulotni oladi (faqat xaridor).
+     *
+     * Javob hech qayerda saqlanmaydi — komponent holatida turadi va
+     * sahifa yopilishi bilan yo'qoladi.
+     */
+    content(id: string): Promise<DigitalContentInfo> {
+      return request(`/deals/${id}/content`);
     },
 
     confirm(id: string, version: number): Promise<{ deal: Deal }> {
@@ -371,12 +509,26 @@ export const api = {
     },
   },
 
+  chat: {
+    list(dealId: string): Promise<{ messages: ChatMessage[]; count: number }> {
+      return request(`/deals/${dealId}/messages`);
+    },
+    send(dealId: string, body: string): Promise<ChatMessage> {
+      return request(`/deals/${dealId}/messages`, { method: 'POST', body: { body } });
+    },
+  },
+
   admin: {
     stats(): Promise<{
       openDisputes: number;
       paymentMismatches: number;
       activeDeals: number;
       escrowTiyin: string;
+      pendingPayoutCount: number;
+      pendingPayoutTiyin: string;
+      providerBalanceTiyin: string | null;
+      shortfallTiyin: string | null;
+      payoutIsManual: boolean;
     }> {
       return request('/admin/stats');
     },
@@ -407,6 +559,30 @@ export const api = {
       return request(`/admin/disputes/${id}/resolve`, {
         method: 'POST',
         body: input,
+        idempotencyKey: crypto.randomUUID(),
+      });
+    },
+
+    payouts(
+      status: 'pending' | 'completed' | 'failed' | 'all' = 'pending',
+    ): Promise<{ payouts: AdminPayout[] }> {
+      return request(`/admin/payouts?status=${status}`);
+    },
+
+    /** "O'tkazdim" — bank o'tkazmasi bajarilgach. */
+    completePayout(id: string, reference: string): Promise<unknown> {
+      return request(`/admin/payouts/${id}/complete`, {
+        method: 'POST',
+        body: { reference },
+        idempotencyKey: crypto.randomUUID(),
+      });
+    },
+
+    /** "Bajara olmadim" — pul foydalanuvchi hisobiga qaytadi. */
+    rejectPayout(id: string, reason: string): Promise<unknown> {
+      return request(`/admin/payouts/${id}/reject`, {
+        method: 'POST',
+        body: { reason },
         idempotencyKey: crypto.randomUUID(),
       });
     },

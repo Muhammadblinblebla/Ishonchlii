@@ -93,8 +93,20 @@ export function computeCommission(
 export interface PaymentBreakdown {
   /** Kelishilgan tovar narxi. */
   readonly amountTiyin: bigint;
-  /** Xaridor haqiqatda tushiradigan summa — escrowga shu tushadi. */
+  /** Xaridor kartasidan yechiladigan summa (to'lov komissiyasi bilan). */
   readonly buyerPaysTiyin: bigint;
+  /**
+   * To'lov tizimi ushlab qoladigan summa.
+   *
+   * Bu bizga TUSHMAYDI — provayder o'zi oladi. Ledgerda alohida yoziladi,
+   * aks holda escrowda bo'lmagan pul bordek ko'rinardi.
+   */
+  readonly providerFeeTiyin: bigint;
+  /**
+   * Bizning balansimizga tushadigan summa = buyerPays − providerFee.
+   * Sotuvchi va platforma ulushi SHU summadan chiqadi.
+   */
+  readonly escrowTiyin: bigint;
   /** Sotuvchi qo'liga tegadigan summa. */
   readonly sellerReceivesTiyin: bigint;
   /** Platforma daromadi. */
@@ -119,41 +131,72 @@ export function computePaymentBreakdown(
   amountTiyin: bigint,
   commissionPayer: CommissionPayer = COMMISSION_POLICY.defaultPayer,
   rateBps: number = COMMISSION_POLICY.rateBps,
+  providerFeeBps: number = COMMISSION_POLICY.providerFeeBps,
 ): PaymentBreakdown {
   assertValidDealAmount(amountTiyin);
 
   const commission = computeCommission(amountTiyin, rateBps);
 
-  let buyerPays: bigint;
+  // ── 1. Escrowga qancha tushishi kerak ─────────────────────────────────────
+  //
+  // Bu sotuvchi va platforma ulushining yig'indisi. `commission_payer`
+  // faqat shu ikkisi orasidagi taqsimotni belgilaydi.
+  let escrowNeeded: bigint;
   let sellerReceives: bigint;
 
   switch (commissionPayer) {
     case 'seller':
-      buyerPays = amountTiyin;
+      escrowNeeded = amountTiyin;
       sellerReceives = amountTiyin - commission;
       break;
 
     case 'buyer':
-      buyerPays = amountTiyin + commission;
+      escrowNeeded = amountTiyin + commission;
       sellerReceives = amountTiyin;
       break;
 
     case 'split': {
-      // Xaridor ulushi pastga yaxlitlanadi → qoldiq tiyin xaridor foydasiga
-      // (u kamroq to'laydi). Bu `remainderTo: 'buyer'` siyosatiga mos.
+      // Xaridor ulushi pastga yaxlitlanadi → qoldiq tiyin xaridor foydasiga.
       const { first: buyerShare, second: sellerShare } = splitWithRemainder(
         commission,
         COMMISSION_POLICY.splitPayerBuyerShareBps,
       );
-      buyerPays = amountTiyin + buyerShare;
+      escrowNeeded = amountTiyin + buyerShare;
       sellerReceives = amountTiyin - sellerShare;
       break;
     }
   }
 
+  // ── 2. Xaridordan qancha yechiladi ────────────────────────────────────────
+  //
+  // To'lov tizimi o'z ulushini USHLAB QOLADI, ya'ni kartadan yechilgan
+  // summadan kamrog'i bizga tushadi. Shuning uchun teskari hisoblaymiz:
+  // provayder ulushi ayirilgandan keyin `escrowNeeded` qolishi kerak.
+  //
+  //     buyerPays × (1 − fee) = escrowNeeded
+  //     buyerPays = escrowNeeded / (1 − fee)
+  //
+  // Yuqoriga yaxlitlanadi: kam bo'lgandan ko'ra bir tiyin ortiq bo'lgani
+  // xavfsizroq — kam bo'lsa sotuvchiga to'lashga pul yetmaydi.
+  const denominator = BigInt(10_000 - providerFeeBps);
+  if (denominator <= 0n) {
+    throw new MoneyError(`To'lov tizimi komissiyasi 100% dan kam bo'lishi kerak: ${providerFeeBps}`);
+  }
+
+  // To'lov tizimi butun so'm qabul qiladi, shuning uchun yuqoriga —
+  // keyingi to'liq so'mgacha yaxlitlanadi. Ortiqcha qism escrowga emas,
+  // provayder ulushiga qo'shiladi: shunda escrowda AYNAN kerakli summa
+  // turadi va taqsimot hisob-kitobi o'zgarmaydi.
+  const raw = ceilDiv(escrowNeeded * 10_000n, denominator);
+  const buyerPays = ceilDiv(raw, 100n) * 100n;
+
+  const providerFee = buyerPays - escrowNeeded;
+
   const breakdown: PaymentBreakdown = {
     amountTiyin,
     buyerPaysTiyin: buyerPays,
+    providerFeeTiyin: providerFee,
+    escrowTiyin: escrowNeeded,
     sellerReceivesTiyin: sellerReceives,
     commissionTiyin: commission,
     commissionPayer,
@@ -164,6 +207,11 @@ export function computePaymentBreakdown(
   return breakdown;
 }
 
+/** Yuqoriga yaxlitlab bo'lish. Butun son arifmetikasi — float ishlatilmaydi. */
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  return (numerator + denominator - 1n) / denominator;
+}
+
 /**
  * Taqsimot muvozanatda ekanini tekshiradi.
  *
@@ -172,15 +220,26 @@ export function computePaymentBreakdown(
  * yetib bormaydi.
  */
 function assertBreakdownBalanced(b: PaymentBreakdown): void {
-  const expected = b.sellerReceivesTiyin + b.commissionTiyin;
-  if (b.buyerPaysTiyin !== expected) {
+  // Escrowdagi pul aynan sotuvchi + platforma ulushiga teng bo'lishi kerak
+  const distributed = b.sellerReceivesTiyin + b.commissionTiyin;
+  if (b.escrowTiyin !== distributed) {
     throw new MoneyError(
-      `Taqsimot muvozanatsiz: xaridor ${b.buyerPaysTiyin} to'laydi, ` +
-        `lekin sotuvchi (${b.sellerReceivesTiyin}) + komissiya (${b.commissionTiyin}) = ${expected}`,
+      `Escrow taqsimotga teng emas: ${b.escrowTiyin} !== ` +
+        `sotuvchi (${b.sellerReceivesTiyin}) + komissiya (${b.commissionTiyin}) = ${distributed}`,
+    );
+  }
+  // Xaridor to'lovi escrow + provayder ulushiga teng bo'lishi kerak
+  if (b.buyerPaysTiyin !== b.escrowTiyin + b.providerFeeTiyin) {
+    throw new MoneyError(
+      `Xaridor to'lovi mos kelmadi: ${b.buyerPaysTiyin} !== ` +
+        `escrow (${b.escrowTiyin}) + to'lov komissiyasi (${b.providerFeeTiyin})`,
     );
   }
   if (b.sellerReceivesTiyin < 0n) {
     throw new MoneyError('Sotuvchi manfiy summa olishi mumkin emas');
+  }
+  if (b.providerFeeTiyin < 0n) {
+    throw new MoneyError('To\'lov komissiyasi manfiy bo\'la olmaydi');
   }
 }
 

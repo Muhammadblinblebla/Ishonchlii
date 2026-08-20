@@ -1,8 +1,17 @@
 /**
- * Boshlang'ich ma'lumotlar — FAQAT development uchun.
+ * BOSHLANG'ICH MA'LUMOTLAR.
  *
- * NODE_ENV=production bo'lsa ishga tushmaydi.
- * Admin paroli .env dagi SEED_ADMIN_PASSWORD dan olinadi, kodga yozilmaydi.
+ * Standart holatda FAQAT administrator hisobi yaratiladi — hech qanday
+ * namunaviy foydalanuvchi, hech qanday soxta savdo.
+ *
+ * Demo foydalanuvchilar ATAYLAB so'ralganda qo'shiladi:
+ *
+ *     npm run db:seed -- --demo
+ *
+ * Nega shunday: avval demo foydalanuvchilar har seed'da yaratilardi va
+ * ular productionga ham tushib ketishi mumkin edi. "aziz@example.uz"
+ * parolini hamma biladi (`Test12345!`) — bunday hisob haqiqiy platformada
+ * ochiq eshik degani.
  */
 
 import '../scripts/load-env.js';
@@ -19,23 +28,36 @@ const ARGON2_OPTIONS = {
   parallelism: 1,
 } as const;
 
+const WANT_DEMO = process.argv.includes('--demo');
+
 async function main(): Promise<void> {
-  if (process.env['NODE_ENV'] === 'production') {
-    throw new Error('Seed production muhitida ishga tushirilmaydi.');
+  const isProd = process.env['NODE_ENV'] === 'production';
+
+  if (isProd && WANT_DEMO) {
+    throw new Error('Demo foydalanuvchilarni production muhitida yaratib bo\'lmaydi.');
   }
 
   const adminEmail = process.env['SEED_ADMIN_EMAIL'];
   const adminPassword = process.env['SEED_ADMIN_PASSWORD'];
 
   if (!adminEmail || !adminPassword) {
-    throw new Error(
-      '.env faylida SEED_ADMIN_EMAIL va SEED_ADMIN_PASSWORD to\'ldirilmagan.',
-    );
+    throw new Error('.env faylida SEED_ADMIN_EMAIL va SEED_ADMIN_PASSWORD to\'ldirilmagan.');
   }
   if (adminPassword.length < 8) {
     throw new Error('SEED_ADMIN_PASSWORD kamida 8 belgidan iborat bo\'lishi kerak (§11).');
   }
 
+  // Production'da zaif standart parol bilan admin ochilib qolmasin.
+  const WEAK = ['Admin12345!', 'admin', 'password', '12345678'];
+  if (isProd && WEAK.includes(adminPassword)) {
+    throw new Error(
+      'SEED_ADMIN_PASSWORD juda oddiy. Production uchun kuchli parol qo\'ying.',
+    );
+  }
+
+  // `update: {}` — mavjud admin paroli QAYTA YOZILMAYDI. Aks holda har
+  // deploy'da parol .env dagi qiymatga qaytib, admin o'zi o'zgartirgan
+  // parolini yo'qotardi.
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
     update: {},
@@ -49,8 +71,14 @@ async function main(): Promise<void> {
   });
   console.log(`  ✓ Admin: ${admin.email}`);
 
-  // Test foydalanuvchilari — ikkalasi ham xaridor va sotuvchi bo'la oladi (§2)
-  const testPasswordHash = await argon2.hash('Test12345!', ARGON2_OPTIONS);
+  if (!WANT_DEMO) {
+    console.log('\n  Seed tugadi — faqat admin yaratildi.');
+    console.log('  Demo foydalanuvchilar kerak bo\'lsa: npm run db:seed -- --demo\n');
+    return;
+  }
+
+  // ── Demo foydalanuvchilar — faqat `--demo` bilan ───────────────────────────
+  const demoPasswordHash = await argon2.hash('Test12345!', ARGON2_OPTIONS);
 
   for (const [email, fullName] of [
     ['aziz@example.uz', 'Aziz Karimov'],
@@ -59,12 +87,12 @@ async function main(): Promise<void> {
     const user = await prisma.user.upsert({
       where: { email },
       update: {},
-      create: { email, fullName, passwordHash: testPasswordHash, isVerified: true },
+      create: { email, fullName, passwordHash: demoPasswordHash, isVerified: true },
     });
-    console.log(`  ✓ Foydalanuvchi: ${user.email}  (parol: Test12345!)`);
+    console.log(`  ✓ Demo foydalanuvchi: ${user.email}  (parol: Test12345!)`);
   }
 
-  console.log('\n  Seed tugadi.\n');
+  console.log('\n  ⚠️  Demo hisoblar yaratildi — productionga chiqarmang.\n');
 }
 
 main()

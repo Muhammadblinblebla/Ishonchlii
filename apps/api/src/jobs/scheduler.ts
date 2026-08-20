@@ -32,7 +32,15 @@ import { executeTransition } from '../deals/transition.js';
 import { processPayment } from '../webhooks/webhooks.routes.js';
 import { flush } from '../notifications/notification.service.js';
 import { enqueue } from '../notifications/notification.service.js';
-import { formatTiyin } from '@escrowuz/shared';
+import {
+  DEAL_TYPES,
+  DEAL_TYPE_RULES,
+  DISPUTE_POLICY,
+  type DisputeFacts,
+  decideDispute,
+  formatTiyin,
+} from '@escrowuz/shared';
+import { post, releaseHoldLegs } from '../ledger/ledger.service.js';
 import { escrowAmountOf } from '../deals/transition.js';
 
 export interface JobResult {
@@ -116,16 +124,21 @@ export async function autoReleaseDeals(log: FastifyBaseLogger): Promise<JobResul
       autoReleaseAt: { lte: new Date(), not: null },
       deletedAt: null,
     },
-    select: { id: true },
+    select: { id: true, dealType: true },
     take: 100,
   });
 
-  for (const { id } of candidates) {
+  for (const { id, dealType } of candidates) {
     try {
+      // Muddat savdo turiga bog'liq — sababda aniq raqam yozilsin,
+      // chunki bu matn foydalanuvchiga ko'rinadi.
+      const hours = DEAL_TYPE_RULES[dealType].autoReleaseHours;
+      const period = hours >= 24 ? `${Math.round(hours / 24)} kun` : `${hours} soat`;
+
       await executeTransition(id, 'auto_release', {
         actorId: null,
         actor: 'system',
-        reason: 'Xaridor 7 kun ichida tasdiqlamadi va nizo ochmadi',
+        reason: `Xaridor ${period} ichida tasdiqlamadi va nizo ochmadi`,
         idempotencyKey: `auto-release:${id}`,
       });
       result.processed++;
@@ -182,6 +195,250 @@ export async function reconcilePendingPayments(log: FastifyBaseLogger): Promise<
     } catch (err) {
       result.failed++;
       result.errors.push(`${invoice.externalId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * MUZLATILGAN PULNI OCHISH (30 soat).
+ *
+ * Savdo yakunlangach pul `user:<id>:holding` da turadi. Muddat tugagach
+ * uni `user:<id>:available` ga ko'chiramiz — shundan keyingina yechib
+ * olish mumkin.
+ *
+ * IDEMPOTENT: har ko'chirish uchun `hold:<id>` kaliti ishlatiladi va
+ * `released_at` belgilanadi. Vazifa ikki marta ishlasa ham pul ikki
+ * marta ko'chmaydi.
+ *
+ * ⚠️ Ledger yozuvi va `released_at` BITTA tranzaksiyada. Aks holda
+ * pul ko'chib, belgi qo'yilmasa — keyingi yurishda YANA ko'chirilardi.
+ */
+export async function releaseWalletHolds(log: FastifyBaseLogger): Promise<JobResult> {
+  const result: JobResult = { name: 'release-holds', processed: 0, failed: 0, errors: [] };
+
+  const due = await prisma.walletHold.findMany({
+    where: { releasedAt: null, releaseAt: { lte: new Date() } },
+    orderBy: { releaseAt: 'asc' },
+    take: 100,
+  });
+
+  for (const hold of due) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Qatorni qulflab, hali ochilmaganini TASDIQLAYMIZ. Ikkita server
+        // nusxasi bir vaqtda ishlasa, ikkinchisi bu yerda to'xtaydi.
+        const locked = await tx.$queryRaw<Array<{ released_at: Date | null }>>`
+          SELECT released_at FROM wallet_holds WHERE id = ${hold.id}::uuid FOR UPDATE
+        `;
+        if (locked.length === 0 || locked[0]?.released_at) return;
+
+        await post(
+          {
+            legs: releaseHoldLegs(hold.userId, hold.amountTiyin),
+            idempotencyKey: `hold:${hold.id}`,
+            dealId: hold.dealId,
+          },
+          tx,
+        );
+
+        await tx.walletHold.update({
+          where: { id: hold.id },
+          data: { releasedAt: new Date() },
+        });
+      }, { isolationLevel: 'Serializable', timeout: 20_000 });
+
+      result.processed++;
+      log.info({ holdId: hold.id, userId: hold.userId }, 'Muzlatilgan pul ochildi');
+    } catch (err) {
+      result.failed++;
+      result.errors.push(`${hold.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * NIZOLARNI AVTOMATIK HAL QILISH.
+ *
+ * Admin hech narsani tekshirmaydi — tizim o'zi qaror qabul qiladi.
+ * Qoidalar `packages/shared/src/dispute-policy.ts` da.
+ *
+ * Ikki bosqich:
+ *   1. Nizo ochilgach `coolingHours` kutiladi — shu vaqt ichida tomonlar
+ *      chatda kelishishi yoki sotuvchi o'zi pulni qaytarishi mumkin
+ *   2. Muddat tugagach tizim faktlarni yig'ib qaror qabul qiladi
+ *
+ * IDEMPOTENT: `dispute-resolve:<id>` kaliti va `resolvedAt` belgisi.
+ */
+export async function autoResolveDisputes(log: FastifyBaseLogger): Promise<JobResult> {
+  const result: JobResult = { name: 'auto-resolve-disputes', processed: 0, failed: 0, errors: [] };
+
+  const cutoff = new Date(Date.now() - DISPUTE_POLICY.coolingHours * 60 * 60 * 1000);
+
+  const pending = await prisma.dispute.findMany({
+    where: { resolvedAt: null, createdAt: { lte: cutoff }, deal: { status: 'DISPUTED' } },
+    include: { deal: true },
+    orderBy: { createdAt: 'asc' },
+    take: 50,
+  });
+
+  for (const dispute of pending) {
+    try {
+      const facts = await collectDisputeFacts(dispute.dealId, dispute.deal.dealType);
+      const decision = decideDispute(facts);
+
+      const action =
+        decision.resolution === 'buyer'
+          ? 'resolve_buyer'
+          : decision.resolution === 'seller'
+            ? 'resolve_seller'
+            : 'resolve_split';
+
+      await executeTransition(dispute.dealId, action, {
+        actorId: null,
+        actor: 'admin', // state machine `admin` aktyorini kutadi; bu yerda TIZIM
+        reason: decision.reason,
+        ...(decision.buyerShareBps === undefined
+          ? {}
+          : { buyerShareBps: decision.buyerShareBps }),
+        metadata: {
+          automatic: true,
+          certain: decision.certain,
+          facts: { ...facts },
+        },
+        idempotencyKey: `dispute-resolve:${dispute.id}`,
+      });
+
+      await prisma.dispute.update({
+        where: { id: dispute.id },
+        data: {
+          status: 'resolved',
+          resolution: decision.resolution,
+          ...(decision.buyerShareBps === undefined
+            ? {}
+            : { buyerShareBps: decision.buyerShareBps }),
+          resolutionNote: decision.reason,
+          // `resolvedBy` NULL = tizim hal qildi, odam emas
+          resolvedAt: new Date(),
+        },
+      });
+
+      result.processed++;
+      log.info(
+        { disputeId: dispute.id, resolution: decision.resolution, certain: decision.certain },
+        'Nizo avtomatik hal qilindi',
+      );
+    } catch (err) {
+      result.failed++;
+      result.errors.push(`${dispute.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Tizim savdo haqida ANIQ biladigan faktlarni yig'adi.
+ *
+ * Bu yerda hech qanday taxmin yo'q — faqat bazada bor narsa.
+ */
+async function collectDisputeFacts(
+  dealId: string,
+  dealType: 'PHYSICAL' | 'GAME_ACCOUNT' | 'DIGITAL',
+): Promise<DisputeFacts> {
+  const deal = await prisma.deal.findUniqueOrThrow({
+    where: { id: dealId },
+    select: { shippedAt: true, sellerId: true },
+  });
+
+  const sellerMarkedDelivered = deal.shippedAt !== null;
+
+  // Topshirilganlik izi va xaridor ko'rgani — savdo turiga qarab
+  // BOSHQA JOYDAN o'qiladi.
+  if (dealType === 'DIGITAL') {
+    const content = await prisma.digitalContent.findUnique({
+      where: { dealId },
+      select: { viewedAt: true },
+    });
+    return {
+      sellerMarkedDelivered,
+      deliveryEvidence: content !== null,
+      buyerReceived: content?.viewedAt !== null && content?.viewedAt !== undefined,
+    };
+  }
+
+  if (dealType === 'GAME_ACCOUNT') {
+    // eFootball: dalil — sotuvchining chatdagi xabari.
+    // "Topshirdim" tugmasini bosib hech narsa yozmaslik mumkin.
+    const sellerMessages = await prisma.message.count({
+      where: { dealId, senderId: deal.sellerId },
+    });
+    const readByBuyer = await prisma.message.count({
+      where: { dealId, senderId: deal.sellerId, readAt: { not: null } },
+    });
+    return {
+      sellerMarkedDelivered,
+      deliveryEvidence: sellerMessages > 0,
+      buyerReceived: readByBuyer > 0,
+    };
+  }
+
+  // Jismoniy tovar: dalil — trek-raqam.
+  //
+  // ⚠️ Xaridor tovarni OLGANINI tizim bilmaydi (pochtaga ulanmaganmiz).
+  // Shuning uchun trek-raqam bo'lsa "yetkazilgan" deb hisoblaymiz —
+  // aks holda har bir jismoniy nizo avtomatik xaridor foydasiga hal
+  // bo'lib, sotuvchilar himoyasiz qolardi.
+  const shipments = await prisma.shipment.count({ where: { dealId } });
+  return {
+    sellerMarkedDelivered,
+    deliveryEvidence: shipments > 0,
+    buyerReceived: shipments > 0,
+  };
+}
+
+/**
+ * TO'LOV NOMUVOFIQLIGINI AVTOMATIK HAL QILISH.
+ *
+ * Kelgan summa savdodagiga mos kelmasa, savdo `PAYMENT_MISMATCH` ga
+ * o'tadi. Ilgari buni admin qo'lda ko'rardi.
+ *
+ * Endi tizim o'zi hal qiladi va DOIM BITTA yo'lni tanlaydi:
+ * pulni xaridorga qaytarish.
+ *
+ * Nega har doim qaytarish: summa noto'g'ri bo'lsa savdoni davom
+ * ettirish har ikki tomon uchun ham noaniqlik. Pulni jo'natuvchiga
+ * qaytarish — yagona shubhasiz to'g'ri harakat. Xaridor xohlasa
+ * yangi savdo ochadi.
+ */
+export async function autoResolveMismatches(log: FastifyBaseLogger): Promise<JobResult> {
+  const result: JobResult = { name: 'auto-resolve-mismatch', processed: 0, failed: 0, errors: [] };
+
+  const stuck = await prisma.deal.findMany({
+    where: { status: 'PAYMENT_MISMATCH', deletedAt: null },
+    select: { id: true },
+    take: 50,
+  });
+
+  for (const { id } of stuck) {
+    try {
+      await executeTransition(id, 'mismatch_refund', {
+        actorId: null,
+        actor: 'admin',
+        reason:
+          'Kelgan to\'lov summasi savdodagiga mos kelmadi. Pul to\'liq ' +
+          'xaridorga qaytarildi — yangi savdo ochishingiz mumkin.',
+        metadata: { automatic: true },
+        idempotencyKey: `mismatch-auto:${id}`,
+      });
+      result.processed++;
+      log.warn({ dealId: id }, 'To\'lov nomuvofiqligi avtomatik qaytarildi');
+    } catch (err) {
+      result.failed++;
+      result.errors.push(`${id}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -246,58 +503,88 @@ export async function sendReminders(log: FastifyBaseLogger): Promise<JobResult> 
   const result: JobResult = { name: 'reminders', processed: 0, failed: 0, errors: [] };
   const now = Date.now();
 
-  // ── 1. Yetkazish eslatmasi: 3 kundan beri FUNDED, trek-raqam yo'q ─────────
-  const unshipped = await prisma.deal.findMany({
-    where: {
-      status: 'FUNDED',
-      fundedAt: { lte: new Date(now - 3 * 24 * 60 * 60 * 1000) },
-      deletedAt: null,
-    },
-    take: 100,
-  });
+  const HOUR_MS = 60 * 60 * 1000;
 
-  for (const deal of unshipped) {
-    await enqueue({
-      userId: deal.sellerId,
-      template: 'reminder.ship',
-      dealId: deal.id,
-      context: { dealTitle: deal.title, amount: formatTiyin(escrowAmountOf(deal)) },
-      // Bir savdo uchun bir marta
-      dedupeKey: `reminder:ship:${deal.id}`,
-    });
-    result.processed++;
-  }
+  // Eslatma muddatlari SAVDO TURIGA bog'liq, shuning uchun har tur uchun
+  // alohida so'rov. Bitta so'rov bilan olib keyin filtrlash ham mumkin edi,
+  // lekin unda `take: 100` chegarasi bir turni butunlay yutib yuborardi.
+  for (const type of DEAL_TYPES) {
+    const rule = DEAL_TYPE_RULES[type];
 
-  // ── 2. Auto-release ogohlantirishi: 3 KUN OLDIN (§6) ──────────────────────
-  //
-  // Bu §6 da alohida talab qilingan: xaridor "vaqt tugadi" degan xabarni
-  // pul o'tib ketgandan KEYIN emas, OLDIN olishi kerak.
-  const soonReleased = await prisma.deal.findMany({
-    where: {
-      status: 'SHIPPED',
-      autoReleaseAt: {
-        not: null,
-        gt: new Date(now),
-        lte: new Date(now + 3 * 24 * 60 * 60 * 1000),
+    // ── 1. Topshirish eslatmasi: pul keldi, lekin hali topshirilmagan ──────
+    const unshipped = await prisma.deal.findMany({
+      where: {
+        dealType: type,
+        status: 'FUNDED',
+        fundedAt: { lte: new Date(now - rule.handoverReminderHours * HOUR_MS) },
+        deletedAt: null,
       },
-      deletedAt: null,
-    },
-    take: 100,
-  });
-
-  for (const deal of soonReleased) {
-    const daysLeft = Math.max(
-      1,
-      Math.ceil(((deal.autoReleaseAt?.getTime() ?? now) - now) / (24 * 60 * 60 * 1000)),
-    );
-    await enqueue({
-      userId: deal.buyerId,
-      template: 'reminder.confirm',
-      dealId: deal.id,
-      context: { dealTitle: deal.title, amount: formatTiyin(escrowAmountOf(deal)), daysLeft },
-      dedupeKey: `reminder:confirm:${deal.id}`,
+      take: 100,
     });
-    result.processed++;
+
+    for (const deal of unshipped) {
+      await enqueue({
+        userId: deal.sellerId,
+        template: 'reminder.ship',
+        dealId: deal.id,
+        context: {
+          dealTitle: deal.title,
+          amount: formatTiyin(escrowAmountOf(deal)),
+          dealType: deal.dealType,
+        },
+        // Bir savdo uchun bir marta
+        dedupeKey: `reminder:ship:${deal.id}`,
+      });
+      result.processed++;
+    }
+
+    // ── 2. Auto-release ogohlantirishi (§6) ────────────────────────────────
+    //
+    // §6 talabi: xaridor "vaqt tugadi" degan xabarni pul o'tib ketgandan
+    // KEYIN emas, OLDIN olishi kerak.
+    //
+    // Ogohlantirish oralig'i ham turga bog'liq: o'yin akkauntida butun
+    // muddat 3 kun, shuning uchun "3 kun qoldi" deb yozish topshirish bilan
+    // bir vaqtda kelib, hech qanday ma'no bermasdi.
+    // `confirmReminderHours: 0` = eslatma yuborilmaydi. Raqamli mahsulotda
+    // muddat 1 soat — xat yetib borguncha vaqt tugaydi.
+    const soonReleased = rule.confirmReminderHours === 0 ? [] : await prisma.deal.findMany({
+      where: {
+        dealType: type,
+        status: 'SHIPPED',
+        autoReleaseAt: {
+          not: null,
+          gt: new Date(now),
+          lte: new Date(now + rule.confirmReminderHours * HOUR_MS),
+        },
+        deletedAt: null,
+      },
+      take: 100,
+    });
+
+    for (const deal of soonReleased) {
+      // Xaridorsiz savdo bu holatga yetib kelmaydi, lekin tip darajasida
+      // mumkin — eslatma yuboradigan manzil yo'q, o'tkazib yuboramiz.
+      if (!deal.buyerId) continue;
+
+      const daysLeft = Math.max(
+        1,
+        Math.ceil(((deal.autoReleaseAt?.getTime() ?? now) - now) / (24 * HOUR_MS)),
+      );
+      await enqueue({
+        userId: deal.buyerId,
+        template: 'reminder.confirm',
+        dealId: deal.id,
+        context: {
+          dealTitle: deal.title,
+          amount: formatTiyin(escrowAmountOf(deal)),
+          daysLeft,
+          dealType: deal.dealType,
+        },
+        dedupeKey: `reminder:confirm:${deal.id}`,
+      });
+      result.processed++;
+    }
   }
 
   // ── 3. Nizo eslatmasi: 24 soatdan beri hal qilinmagan (§6) ────────────────
@@ -351,8 +638,16 @@ const JOBS: ScheduledJob[] = [
   // Yo'qolgan to'lovlar — xaridor kutib turadi
   { name: 'reconcile-payments', everyMs: 2 * 60_000, run: reconcilePendingPayments },
   { name: 'retry-webhooks', everyMs: 5 * 60_000, run: retryFailedWebhooks },
-  { name: 'auto-release', everyMs: 10 * 60_000, run: autoReleaseDeals },
+  // Raqamli mahsulotda auto-release oynasi ATIGI 1 SOAT — tez-tez
+  // tekshirish kerak, aks holda sotuvchi keraksiz kutib qoladi.
+  { name: 'auto-release', everyMs: 5 * 60_000, run: autoReleaseDeals },
   { name: 'expire-unpaid', everyMs: 15 * 60_000, run: expireUnpaidDeals },
+  // 30 soatlik muzlatish — 10 daqiqalik aniqlik yetarli
+  { name: 'release-holds', everyMs: 10 * 60_000, run: releaseWalletHolds },
+  // To'lov nomuvofiqligi — pul xaridorda muzlab qolmasin, tez qaytarilsin
+  { name: 'auto-resolve-mismatch', everyMs: 10 * 60_000, run: autoResolveMismatches },
+  // Nizolar — 24 soatlik kutish muddati bor, tez-tez tekshirish shart emas
+  { name: 'auto-resolve-disputes', everyMs: 30 * 60_000, run: autoResolveDisputes },
   { name: 'reminders', everyMs: 30 * 60_000, run: sendReminders },
 ];
 

@@ -26,17 +26,38 @@ import {
   type DealStatus,
   checkTransition,
   computePaymentBreakdown,
+  dealTypeRule,
   distributeFullRefund,
   distributeRefundKeepingCommission,
   distributeSplit,
   holdsEscrow,
   refundRuleFor,
   type RefundableStatus,
+  WALLET_HOLD_HOURS,
 } from '@escrowuz/shared';
 import { prisma } from '../db/prisma.js';
 import { ApiError } from '../lib/errors.js';
 import * as ledger from '../ledger/ledger.service.js';
+import { getPaymentProvider } from '../payments/index.js';
 import { notifyTransition } from '../notifications/deal-notifications.js';
+
+/**
+ * Pul SOTUVCHIGA o'tadigan yakuniy holatlar.
+ *
+ * Aynan shularda 30 soatlik muzlatish yoziladi. Qaytarish holatlari
+ * (`REFUNDED`, `RESOLVED_BUYER`) bu ro'yxatda YO'Q: u yerda pul xaridorga
+ * qaytadi va darhol yechib olinadi — xaridorni ushlab turishning ma'nosi yo'q.
+ */
+const SELLER_RELEASE_STATUSES = new Set<DealStatus>([
+  'DELIVERED',
+  'AUTO_RELEASED',
+  'RESOLVED_SELLER',
+]);
+
+/** Savdoga muzlatib qo'yilgan komissiya. */
+function commissionOf(deal: Deal): bigint {
+  return deal.commissionTiyin;
+}
 
 export interface TransitionContext {
   /** Amalni bajarayotgan foydalanuvchi. Fon vazifasi bo'lsa `null`. */
@@ -101,10 +122,17 @@ export async function executeTransition(
       const row = locked[0]!;
       const deal: Deal = {
         id: row['id'] as string,
-        buyerId: row['buyer_id'] as string,
+        // Xaridor hali noma'lum bo'lishi mumkin (kalit so'z bilan yaratilgan
+        // savdo hali band qilinmagan).
+        buyerId: (row['buyer_id'] as string | null) ?? null,
         sellerId: row['seller_id'] as string,
         title: row['title'] as string,
         description: row['description'] as string,
+        dealType: row['deal_type'] as Deal['dealType'],
+        game: (row['game'] as string | null) ?? null,
+        keyword: row['keyword'] as string,
+        keywordNormalized: row['keyword_normalized'] as string,
+        claimedAt: (row['claimed_at'] as Date | null) ?? null,
         amountTiyin: BigInt(String(row['amount_tiyin'])),
         commissionTiyin: BigInt(String(row['commission_tiyin'])),
         commissionBps: Number(row['commission_bps']),
@@ -166,9 +194,34 @@ export async function executeTransition(
           status: to,
           version: { increment: 1 },
           ...timestampFor(to, now),
-          ...timerFor(to, now),
+          ...timerFor(to, now, deal.dealType),
         },
       });
+
+      // ── 6b. Hamyonda 30 soatlik muzlatish ─────────────────────────────────
+      //
+      // Pul `releaseLegs` orqali `user:<id>:holding` ga tushdi. Shu yozuv
+      // uni qachon `available` ga ko'chirishni belgilaydi.
+      //
+      // AYNAN SHU TRANZAKSIYADA yoziladi: ledger yozuvi bo'lib, muzlatish
+      // yozuvi bo'lmasa, pul `holding` da MANGU qolib ketardi — sotuvchi
+      // uni hech qachon yecha olmasdi.
+      if (SELLER_RELEASE_STATUSES.has(to)) {
+        const sellerAmount = escrowAmountOf(deal) - commissionOf(deal);
+        if (sellerAmount > 0n) {
+          await tx.walletHold.upsert({
+            where: { dealId: deal.id },
+            // Takroriy o'tish bo'lsa (idempotentlik) — mavjudini o'zgartirmaymiz
+            update: {},
+            create: {
+              userId: deal.sellerId,
+              dealId: deal.id,
+              amountTiyin: sellerAmount,
+              releaseAt: new Date(now.getTime() + WALLET_HOLD_HOURS * HOUR),
+            },
+          });
+        }
+      }
 
       // ── 7. Tarix ──────────────────────────────────────────────────────────
       await tx.dealEvent.create({
@@ -218,6 +271,23 @@ export async function executeTransition(
 // PUL HARAKATINI QURISH
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Savdoning xaridorini qaytaradi.
+ *
+ * Kalit so'z bilan yaratilgan savdo BAND QILINMAGUNCHA xaridorsiz turadi.
+ * Pul harakati esa faqat to'lovdan keyin bo'ladi — ya'ni bu yerda xaridor
+ * doim mavjud. Agar yo'q bo'lsa, bu ma'lumot buzilgani degani va pulni
+ * harakatlantirishdan OLDIN to'xtaymiz.
+ */
+function requireBuyer(deal: Deal): string {
+  if (!deal.buyerId) {
+    throw new Error(
+      `Ichki xato: ${deal.id} savdosida pul harakati kerak, lekin xaridor belgilanmagan`,
+    );
+  }
+  return deal.buyerId;
+}
+
 function buildLedgerLegs(
   deal: Deal,
   from: DealStatus,
@@ -227,7 +297,8 @@ function buildLedgerLegs(
   // Escrowda turgan summa = xaridor haqiqatda tushirgan summa.
   // Bu `amountTiyin` bilan bir xil EMAS: komissiya to'lovchisiga qarab
   // xaridor ko'proq to'lagan bo'lishi mumkin.
-  const escrow = escrowAmountOf(deal);
+  const breakdown = breakdownOf(deal);
+  const escrow = breakdown.escrowTiyin;
   const commission = deal.commissionTiyin;
 
   switch (to) {
@@ -236,7 +307,15 @@ function buildLedgerLegs(
       // `PAYMENT_MISMATCH → FUNDED` da pul allaqachon kirgan (admin tasdiqladi),
       // qayta yozilmaydi.
       if (from === 'PAYMENT_MISMATCH') return [];
-      return ledger.depositLegs(deal.sellerId, escrow, 'checkout_uz');
+      // Provayder nomi ledger hisobiga yoziladi (`external:click`).
+      // Qattiq yozilmaydi: provayder almashsa eski yozuvlar o'z nomida
+      // qoladi, yangilari yangi nom bilan ketadi — hisobot to'g'ri chiqadi.
+      return ledger.depositLegs(
+        deal.sellerId,
+        escrow,
+        breakdown.providerFeeTiyin,
+        getPaymentProvider().name,
+      );
 
     // ── Pul sotuvchiga ────────────────────────────────────────────────────
     case 'DELIVERED':
@@ -247,6 +326,10 @@ function buildLedgerLegs(
     // ── Pul xaridorga ─────────────────────────────────────────────────────
     case 'REFUNDED':
     case 'RESOLVED_BUYER': {
+      // Pul qaytarish uchun xaridor kerak. Bu yerga faqat to'lovdan KEYIN
+      // kelinadi, ya'ni xaridor allaqachon ma'lum — lekin tekshiramiz:
+      // xaridorsiz qaytarish puli qayerga ketishini hech kim bilmasdi.
+      const buyerId = requireBuyer(deal);
       const rule = refundRuleFor(to as RefundableStatus);
       const dist =
         rule === 'keep_commission'
@@ -254,7 +337,7 @@ function buildLedgerLegs(
           : distributeFullRefund(escrow);
 
       return ledger.refundLegs(
-        deal.buyerId,
+        buyerId,
         deal.sellerId,
         escrow,
         dist.toBuyerTiyin,
@@ -265,6 +348,7 @@ function buildLedgerLegs(
 
     // ── Bo'lib berish ─────────────────────────────────────────────────────
     case 'RESOLVED_SPLIT': {
+      const buyerId = requireBuyer(deal);
       if (ctx.buyerShareBps === undefined) {
         throw ApiError.badRequest('Bo\'lish uchun xaridor ulushi (buyerShareBps) ko\'rsatilmagan');
       }
@@ -272,7 +356,7 @@ function buildLedgerLegs(
       const dist = distributeSplit(escrow, ctx.buyerShareBps, commission, takeCommission);
 
       return ledger.refundLegs(
-        deal.buyerId,
+        buyerId,
         deal.sellerId,
         escrow,
         dist.toBuyerTiyin,
@@ -299,17 +383,17 @@ function buildLedgerLegs(
 }
 
 /**
- * Savdoning escrowidagi summa — ya'ni xaridor haqiqatda tushirgani.
+ * Savdoning to'liq pul taqsimoti.
  *
- * Hisob-kitob `money.ts` dagi `computePaymentBreakdown` ga topshiriladi.
- * Uni bu yerda qayta yozish mumkin edi, lekin ikki nusxa vaqt o'tib
+ * Hisob-kitob `money.ts` dagi `computePaymentBreakdown` ga topshiriladi —
+ * uni bu yerda qayta yozish mumkin edi, lekin ikki nusxa vaqt o'tib
  * ajralib ketadi va o'shanda qaysi biri to'g'ri ekani noma'lum bo'lardi.
  *
  * Savdo yaratilgan paytdagi komissiya stavkasi ishlatiladi (`commissionBps`),
  * hozirgi siyosatdagi emas — siyosat o'zgarsa eski savdolar o'z shartlarini
  * saqlab qolishi kerak.
  */
-export function escrowAmountOf(deal: Deal): bigint {
+export function breakdownOf(deal: Deal) {
   const breakdown = computePaymentBreakdown(
     deal.amountTiyin,
     deal.commissionPayer,
@@ -325,7 +409,26 @@ export function escrowAmountOf(deal: Deal): bigint {
     );
   }
 
-  return breakdown.buyerPaysTiyin;
+  return breakdown;
+}
+
+/**
+ * ESCROWDA turgan summa — bizning balansimizga haqiqatda tushgani.
+ *
+ * Bu xaridor to'lagan summadan KAM: to'lov tizimi o'z ulushini ushlab qoladi.
+ * Sotuvchiga va platformaga aynan shu summadan to'lanadi.
+ */
+export function escrowAmountOf(deal: Deal): bigint {
+  return breakdownOf(deal).escrowTiyin;
+}
+
+/**
+ * Xaridor kartasidan yechiladigan summa (to'lov komissiyasi bilan).
+ *
+ * Hisob-faktura shu summaga yaratiladi va webhook ham shuni tasdiqlaydi.
+ */
+export function chargedAmountOf(deal: Deal): bigint {
+  return breakdownOf(deal).buyerPaysTiyin;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,7 +466,11 @@ const HOUR = 60 * 60 * 1000;
  * `autoReleaseAt = null` qilinadi — fon vazifasi `NULL` qiymatli
  * savdolarni umuman ko'rmaydi.
  */
-function timerFor(to: DealStatus, now: Date): Partial<Prisma.DealUpdateInput> {
+function timerFor(
+  to: DealStatus,
+  now: Date,
+  dealType: Deal['dealType'],
+): Partial<Prisma.DealUpdateInput> {
   switch (to) {
     case 'AWAITING_PAYMENT':
       // §6: to'lov muddati 48 soat
@@ -372,9 +479,13 @@ function timerFor(to: DealStatus, now: Date): Partial<Prisma.DealUpdateInput> {
     case 'FUNDED':
       return { paymentDueAt: null, autoReleaseAt: null };
 
-    case 'SHIPPED':
-      // §6: 7 kun ichida tasdiqlanmasa avtomatik o'tkaziladi
-      return { autoReleaseAt: new Date(now.getTime() + 7 * 24 * HOUR), paymentDueAt: null };
+    case 'SHIPPED': {
+      // Muddat SAVDO TURIGA bog'liq: jismoniy tovar 7 kun (pochta yo'lda
+      // ketadi), o'yin akkaunti 3 kun (topshirish bir zumda bo'ladi).
+      // Aniq qiymat `packages/shared/src/deal-types.ts` da.
+      const hours = dealTypeRule(dealType).autoReleaseHours;
+      return { autoReleaseAt: new Date(now.getTime() + hours * HOUR), paymentDueAt: null };
+    }
 
     case 'DISPUTED':
       // ⚠️ ENG MUHIM QATOR: nizo ochilganda auto-release timeri O'CHADI.

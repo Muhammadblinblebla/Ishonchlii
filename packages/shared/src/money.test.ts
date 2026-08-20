@@ -34,35 +34,77 @@ describe('applyBps', () => {
   });
 });
 
-describe('computePaymentBreakdown — komissiyani kim to\'laydi', () => {
-  it('payer=seller: xaridor narxni to\'laydi, sotuvchi narx−komissiya oladi', () => {
-    const b = computePaymentBreakdown(AMOUNT, 'seller');
+// Aniq raqamli testlarda stavka ATAYLAB berilgan (siyosatdagi standart emas).
+// Sababi: bular arifmetikani tekshiradi. Stavka o'zgarganda test yiqilmasligi,
+// balki o'sha-o'sha hisobni tekshirishda davom etishi kerak.
+const BPS_3 = 300;
+/** To'lov tizimi komissiyasi ham ataylab pinlangan — siyosat o'zgarsa ham
+ *  bu testlar o'sha-o'sha arifmetikani tekshirishda davom etadi. */
+const PROVIDER_BPS_75 = 750;
 
-    expect(b.buyerPaysTiyin).toBe(10_000_000n);
+describe('computePaymentBreakdown — komissiyani kim to\'laydi', () => {
+  it('payer=seller: escrowda narx turadi, sotuvchi narx−komissiya oladi', () => {
+    const b = computePaymentBreakdown(AMOUNT, 'seller', BPS_3, PROVIDER_BPS_75);
+
+    expect(b.escrowTiyin).toBe(10_000_000n);
     expect(b.sellerReceivesTiyin).toBe(9_700_000n);
     expect(b.commissionTiyin).toBe(300_000n);
+    // Xaridor ko'proq to'laydi: to'lov tizimi 7.5% ushlab qoladi
+    expect(b.buyerPaysTiyin).toBe(10_810_900n);
+    expect(b.providerFeeTiyin).toBe(810_900n);
   });
 
-  it('payer=buyer: xaridor narx+komissiya to\'laydi, sotuvchi to\'liq oladi', () => {
-    const b = computePaymentBreakdown(AMOUNT, 'buyer');
+  it('payer=buyer: sotuvchi to\'liq narxni oladi', () => {
+    const b = computePaymentBreakdown(AMOUNT, 'buyer', BPS_3, PROVIDER_BPS_75);
 
-    expect(b.buyerPaysTiyin).toBe(10_300_000n);
+    expect(b.escrowTiyin).toBe(10_300_000n);
     expect(b.sellerReceivesTiyin).toBe(10_000_000n);
     expect(b.commissionTiyin).toBe(300_000n);
+    expect(b.buyerPaysTiyin).toBe(11_135_200n);
   });
 
-  it('payer=split: komissiya teng bo\'linadi', () => {
-    const b = computePaymentBreakdown(AMOUNT, 'split');
+  it('payer=split: platforma komissiyasi teng bo\'linadi', () => {
+    const b = computePaymentBreakdown(AMOUNT, 'split', BPS_3, PROVIDER_BPS_75);
 
-    expect(b.buyerPaysTiyin).toBe(10_150_000n);
+    expect(b.escrowTiyin).toBe(10_150_000n);
     expect(b.sellerReceivesTiyin).toBe(9_850_000n);
     expect(b.commissionTiyin).toBe(300_000n);
   });
 
-  it('har uch holatda ham: xaridor to\'laydi === sotuvchi oladi + komissiya', () => {
+  it('ESCROW === sotuvchi + platforma komissiyasi', () => {
+    // Bu eng muhim invariant: escrowda turgan pul aynan taqsimlanadigan
+    // summaga teng bo'lishi kerak, aks holda to'lashga mablag' yetmaydi.
     for (const payer of ['buyer', 'seller', 'split'] as const) {
       const b = computePaymentBreakdown(AMOUNT, payer);
-      expect(b.buyerPaysTiyin, payer).toBe(b.sellerReceivesTiyin + b.commissionTiyin);
+      expect(b.escrowTiyin, payer).toBe(b.sellerReceivesTiyin + b.commissionTiyin);
+    }
+  });
+
+  it('XARIDOR TO\'LOVI === escrow + to\'lov tizimi komissiyasi', () => {
+    for (const payer of ['buyer', 'seller', 'split'] as const) {
+      const b = computePaymentBreakdown(AMOUNT, payer);
+      expect(b.buyerPaysTiyin, payer).toBe(b.escrowTiyin + b.providerFeeTiyin);
+    }
+  });
+
+  it('xaridor to\'lovi BUTUN SO\'M — to\'lov tizimi talabi', () => {
+    for (const payer of ['buyer', 'seller', 'split'] as const) {
+      for (const amount of [100_000n, 333_300n, 1_234_500n, 10_000_000n]) {
+        const b = computePaymentBreakdown(amount, payer);
+        expect(b.buyerPaysTiyin % 100n, `${amount} ${payer}`).toBe(0n);
+      }
+    }
+  });
+
+  it('platforma HECH QACHON zarar ko\'rmaydi', () => {
+    // Xaridor to'lovi barcha majburiyatlarni qoplashi shart:
+    // sotuvchi + platforma komissiyasi + to'lov tizimi komissiyasi
+    for (const payer of ['buyer', 'seller', 'split'] as const) {
+      for (const amount of [100_000n, 500_000n, 3_333_300n, 10_000_000n]) {
+        const b = computePaymentBreakdown(amount, payer);
+        const majburiyat = b.sellerReceivesTiyin + b.commissionTiyin + b.providerFeeTiyin;
+        expect(b.buyerPaysTiyin, `${amount} ${payer}`).toBeGreaterThanOrEqual(majburiyat);
+      }
     }
   });
 });
@@ -70,14 +112,14 @@ describe('computePaymentBreakdown — komissiyani kim to\'laydi', () => {
 describe('Yaxlitlash — birorta tiyin yo\'qolmaydi (§12)', () => {
   it('toq komissiyada split yig\'indisi aniq chiqadi', () => {
     // 333 333 tiyin * 3% = 9999.99 → 9999 (toq son)
-    const b = computePaymentBreakdown(333_333n, 'split');
+    const b = computePaymentBreakdown(333_333n, 'split', BPS_3, PROVIDER_BPS_75);
 
     expect(b.commissionTiyin).toBe(9_999n);
     // Xaridor ulushi pastga: 9999 * 50% = 4999.5 → 4999
     // Sotuvchi qolganini ko'taradi: 9999 − 4999 = 5000
-    expect(b.buyerPaysTiyin).toBe(333_333n + 4_999n);
+    expect(b.escrowTiyin).toBe(333_333n + 4_999n);
     expect(b.sellerReceivesTiyin).toBe(333_333n - 5_000n);
-    expect(b.buyerPaysTiyin).toBe(b.sellerReceivesTiyin + b.commissionTiyin);
+    expect(b.escrowTiyin).toBe(b.sellerReceivesTiyin + b.commissionTiyin);
   });
 
   it('1 tiyindan 10 000 tiyingacha HAR BIR summada muvozanat saqlanadi', () => {
@@ -86,9 +128,10 @@ describe('Yaxlitlash — birorta tiyin yo\'qolmaydi (§12)', () => {
       for (const payer of ['buyer', 'seller', 'split'] as const) {
         const b = computePaymentBreakdown(amount, payer);
         expect(
-          b.buyerPaysTiyin,
+          b.escrowTiyin,
           `summa=${amount} payer=${payer}`,
         ).toBe(b.sellerReceivesTiyin + b.commissionTiyin);
+        expect(b.buyerPaysTiyin).toBe(b.escrowTiyin + b.providerFeeTiyin);
         expect(b.sellerReceivesTiyin).toBeGreaterThanOrEqual(0n);
       }
     }
@@ -98,8 +141,9 @@ describe('Yaxlitlash — birorta tiyin yo\'qolmaydi (§12)', () => {
     for (const bps of [1, 7, 33, 250, 300, 999, 1_234, 5_000]) {
       for (const payer of ['buyer', 'seller', 'split'] as const) {
         const b = computePaymentBreakdown(1_234_567n, payer, bps);
-        expect(b.buyerPaysTiyin, `bps=${bps} payer=${payer}`)
+        expect(b.escrowTiyin, `bps=${bps} payer=${payer}`)
           .toBe(b.sellerReceivesTiyin + b.commissionTiyin);
+        expect(b.buyerPaysTiyin).toBe(b.escrowTiyin + b.providerFeeTiyin);
       }
     }
   });

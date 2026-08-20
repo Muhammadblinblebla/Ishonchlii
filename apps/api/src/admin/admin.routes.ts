@@ -84,10 +84,14 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     if (!dispute) throw ApiError.notFound('Nizo topilmadi');
 
     const [buyer, seller, events, shipments] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: dispute.deal.buyerId },
-        select: { id: true, fullName: true, email: true },
-      }),
+      // Nizo faqat to'lovdan keyin ochiladi, ya'ni xaridor ma'lum.
+      // Baribir tekshiramiz — buzilgan ma'lumotda yiqilmasin.
+      dispute.deal.buyerId
+        ? prisma.user.findUnique({
+            where: { id: dispute.deal.buyerId },
+            select: { id: true, fullName: true, email: true },
+          })
+        : Promise.resolve(null),
       prisma.user.findUnique({
         where: { id: dispute.deal.sellerId },
         select: { id: true, fullName: true, email: true },

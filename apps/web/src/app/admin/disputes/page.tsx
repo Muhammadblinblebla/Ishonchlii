@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useRequireAuth } from '@/components/AuthProvider';
 import { EmptyState, ErrorBox, Field, Spinner } from '@/components/ui';
+import { uz } from '@escrowuz/shared';
 import { api, ApiRequestError, type AdminDispute } from '@/lib/api';
 import { formatAmount, formatDate } from '@/lib/format';
 
@@ -55,6 +56,38 @@ export default function AdminDisputesPage() {
         </p>
       </div>
 
+      {/*
+        Admin panelining roli o'zgardi: bu KUZATUV oynasi, ish joyi emas.
+        Nizolarni tizim o'zi hal qiladi — bu yerdagi tugmalar faqat
+        tizim qarori aniq noto'g'ri bo'lganda ishlatiladi.
+      */}
+      <section className="card border-brand-200 bg-brand-50 p-4 sm:p-5">
+        <p className="font-medium text-brand-900">{uz.admin.autoTitle}</p>
+        <p className="mt-1 text-sm leading-relaxed text-brand-800">{uz.admin.autoText}</p>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-medium text-brand-700">
+            Tizim qanday qaror qabul qiladi?
+          </summary>
+          <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-brand-900">
+            <li>
+              <strong>Sotuvchi hech narsa topshirmagan</strong> → pul to&apos;liq
+              xaridorga
+            </li>
+            <li>
+              <strong>&quot;Topshirdim&quot; bosilgan, lekin izi yo&apos;q</strong> → pul
+              to&apos;liq xaridorga
+            </li>
+            <li>
+              <strong>Topshirilgan, xaridor ochib ko&apos;rmagan</strong> → pul sotuvchiga
+            </li>
+            <li>
+              <strong>Ikkalasida ham dalil bor</strong> → teng bo&apos;linadi (tizim
+              mahsulot ichini tekshira olmaydi)
+            </li>
+          </ul>
+        </details>
+      </section>
+
       <ErrorBox message={error} />
 
       {stats && (
@@ -73,7 +106,7 @@ export default function AdminDisputesPage() {
       ) : (
         <ul className="space-y-4">
           {disputes.map((dispute) => (
-            <li key={dispute.id} className="card p-6">
+            <li key={dispute.id} className="card p-4 sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <Link
@@ -82,11 +115,11 @@ export default function AdminDisputesPage() {
                   >
                     {dispute.deal.title}
                   </Link>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="break-anywhere mt-1 text-sm text-slate-500">
                     {dispute.opener.fullName} ochgan · {formatDate(dispute.createdAt)}
                   </p>
                 </div>
-                <p className="tabular shrink-0 font-semibold text-slate-900">
+                <p className="tabular shrink-0 text-lg font-semibold text-slate-900">
                   {formatAmount(dispute.deal.amountTiyin)}
                 </p>
               </div>
@@ -124,7 +157,7 @@ export default function AdminDisputesPage() {
 
 function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
-    <div className={`card p-5 ${warn ? 'border-amber-300 bg-amber-50' : ''}`}>
+    <div className={`card p-4 sm:p-5 ${warn ? 'border-amber-300 bg-amber-50' : ''}`}>
       <p className="text-sm text-slate-500">{label}</p>
       <p className={`tabular mt-1 text-2xl font-semibold ${warn ? 'text-amber-900' : 'text-slate-900'}`}>
         {value}
@@ -206,11 +239,7 @@ function ResolveForm({
               key={opt.id}
               type="button"
               onClick={() => setResolution(opt.id)}
-              className={`rounded-lg border px-3 py-2.5 text-sm transition-colors ${
-                resolution === opt.id
-                  ? 'border-brand-500 bg-brand-50 font-medium text-brand-800'
-                  : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
+              className={resolution === opt.id ? 'choice-on' : 'choice-off'}
             >
               {opt.label}
             </button>

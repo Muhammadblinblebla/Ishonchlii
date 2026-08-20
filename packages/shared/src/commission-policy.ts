@@ -35,6 +35,14 @@ export interface CommissionPolicy {
    */
   readonly rateBps: number;
 
+  /**
+   * To'lov tizimi komissiyasi (bazis punkt).
+   *
+   * Bu bizga tushmaydi — provayder ushlab qoladi. Xaridor to'lovi ustiga
+   * qo'shiladi, shuning uchun escrowga kerakli summa to'liq tushadi.
+   */
+  readonly providerFeeBps: number;
+
   /** Savdo yaratilayotganda `commission_payer` ko'rsatilmasa shu ishlatiladi. */
   readonly defaultPayer: CommissionPayer;
 
@@ -80,14 +88,30 @@ export type RefundableStatus = Extract<
 >;
 
 export const COMMISSION_POLICY: CommissionPolicy = {
-  rateBps: 300, // 3%
+  rateBps: 100, // 1% — platformaning XIZMAT HAQQI
   defaultPayer: 'seller',
+
+  /**
+   * TO'LOV TIZIMI komissiyasi (bazis punkt). Click: 1% = 100 bps.
+   *
+   * ⚠️ Bu summa BIZGA TUSHMAYDI — provayder uni o'zi ushlab qoladi.
+   * Shuning uchun u xaridor to'lovi USTIGA qo'shiladi: aks holda escrowga
+   * kerakli summa to'liq tushmaydi va platforma farqni o'z hisobidan
+   * qoplashga majbur bo'lardi.
+   *
+   * ⚠️ BU BIZNING TANLOVIMIZ EMAS — Click haqiqatda ushlab qoladigan foiz.
+   * Haqiqiydan PAST qo'yilsa, platforma har savdoda zarar ko'radi.
+   * Shartnomadagi aniq foizni tekshirib, shu yerga yozing.
+   *
+   * `rateBps` (1%) bilan birga xaridorga tushadigan umumiy ustama: 2%.
+   */
+  providerFeeBps: 100,
 
   minCommissionTiyin: 0,
   maxCommissionTiyin: null,
 
   // Chegaralar to'lov provayderining imkoniyatiga moslangan.
-  // checkout.uz: 1 000 – 10 000 000 so'm (https://checkout.uz/api-docs).
+  // Click Pay bilan shartnoma tuzilgach, uning chegaralariga moslang.
   //
   // DIQQAT: `commission_payer='buyer'` bo'lganda xaridor `amount + komissiya`
   // to'laydi, ya'ni provayderga ketadigan summa bu chegaradan OSHIB ketishi

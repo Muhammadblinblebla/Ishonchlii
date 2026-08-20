@@ -8,7 +8,10 @@ out/
 # Sirlar — hech qachon commit qilinmaydi
 .env
 .env.*
+# Namuna fayllar git'da bo'lishi SHART — deploy paytida kerak.
+# Ular ichida haqiqiy sir yo'q, faqat "..." o'rin egallovchilar.
 !.env.example
+!.env.production.example
 
 # Yuklangan fayllar (dalil rasmlari)
 storage/

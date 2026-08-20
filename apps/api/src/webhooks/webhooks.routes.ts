@@ -22,7 +22,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { executeTransition } from '../deals/transition.js';
-import { escrowAmountOf } from '../deals/transition.js';
+
 import { getPaymentProvider } from '../payments/index.js';
 
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
@@ -147,7 +147,13 @@ export async function processPayment(invoiceId: string, ipAddress?: string): Pro
     return;
   }
 
-  const expected = escrowAmountOf(deal);
+  // Solishtirish HISOB-FAKTURADAGI summa bilan.
+  //
+  // Bu xaridor kartasidan yechilgan summa — escrowga tushadigani emas.
+  // Savdodan qayta hisoblash NOTO'G'RI bo'lardi: hisob-faktura
+  // yaratilgandan keyin komissiya siyosati o'zgargan bo'lsa, mutlaqo
+  // to'g'ri to'lov "mos kelmadi" deb belgilanib qolardi.
+  const expected = invoice.amountTiyin;
 
   // ── §5: summa AYNAN mos kelishi shart ─────────────────────────────────────
   if (status.amountTiyin !== expected) {

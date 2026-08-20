@@ -35,11 +35,25 @@ export const walletRoutes: FastifyPluginAsync = async (app) => {
   /** Balans — DOIM ledgerdan hisoblanadi (§4). */
   app.get('/wallet', async (req, reply) => {
     const balance = await ledger.getBalance(req.user!.id);
+
+    // Muzlatilgan summalar qachon ochilishini ham qaytaramiz — foydalanuvchi
+    // "pulim qayerda?" deb so'ramasligi uchun aniq sana ko'rsatiladi.
+    const holds = await prisma.walletHold.findMany({
+      where: { userId: req.user!.id, releasedAt: null },
+      orderBy: { releaseAt: 'asc' },
+      select: { id: true, amountTiyin: true, releaseAt: true, dealId: true },
+      take: 50,
+    });
+
     return reply.send(
       serializeBigInt({
         availableTiyin: balance.availableTiyin,
         pendingTiyin: balance.pendingTiyin,
-        totalTiyin: balance.availableTiyin + balance.pendingTiyin,
+        holdingTiyin: balance.holdingTiyin,
+        totalTiyin: balance.availableTiyin + balance.pendingTiyin + balance.holdingTiyin,
+        holds,
+        /** Eng yaqin ochilish vaqti — interfeys taymer ko'rsatishi uchun. */
+        nextReleaseAt: holds[0]?.releaseAt ?? null,
         currency: 'UZS',
       }),
     );

@@ -8,6 +8,7 @@
 
 import { env } from '../config/env.js';
 import { CheckoutUzProvider } from './checkout-uz.provider.js';
+import { ClickProvider } from './click.provider.js';
 import { MockPaymentProvider } from './mock.provider.js';
 import type { PaymentProvider } from './provider.js';
 
@@ -17,6 +18,9 @@ export function getPaymentProvider(): PaymentProvider {
   if (instance) return instance;
 
   switch (env.PAYMENT_PROVIDER) {
+    case 'click':
+      instance = new ClickProvider();
+      break;
     case 'checkout_uz':
       instance = new CheckoutUzProvider();
       break;
@@ -35,6 +39,7 @@ export function setPaymentProvider(provider: PaymentProvider | null): void {
 
 export * from './provider.js';
 export { MockPaymentProvider } from './mock.provider.js';
+export { ClickProvider, CLICK_ACTION, CLICK_ERROR } from './click.provider.js';
 export {
   CheckoutUzProvider,
   NotImplementedError,

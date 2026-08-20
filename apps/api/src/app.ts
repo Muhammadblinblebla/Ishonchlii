@@ -8,8 +8,10 @@ import { env } from './config/env.js';
 import { ApiError } from './lib/errors.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { dealRoutes } from './deals/deals.routes.js';
+import { chatRoutes } from './deals/chat.routes.js';
 import { walletRoutes } from './wallet/wallet.routes.js';
 import { webhookRoutes } from './webhooks/webhooks.routes.js';
+import { clickRoutes } from './webhooks/click.routes.js';
 import { mockPayRoutes } from './dev/mock-pay.routes.js';
 import { adminRoutes } from './admin/admin.routes.js';
 import { idempotencyPlugin } from './plugins/idempotency.plugin.js';
@@ -25,6 +27,29 @@ export interface BuildAppOptions {
    * ataylab yoqilgan holda tekshiriladi.
    */
   rateLimiting?: boolean;
+}
+
+/**
+ * Development'da lokal tarmoqdagi manzillarga ham ruxsat beradi.
+ *
+ * Nega kerak: saytni telefonda sinash uchun `http://192.168.1.7:3000` orqali
+ * kiriladi. Bunday Origin ro'yxatda bo'lmagani uchun brauzer so'rovni
+ * bloklaydi — va bu **jimgina** sodir bo'ladi: foydalanuvchi tugmani bosadi,
+ * hech narsa bo'lmaydi, xato ham ko'rinmaydi.
+ *
+ * PRODUCTION'DA ISHLAMAYDI (`env.isProd` tekshiruvi chaqiruv joyida) —
+ * u yerda faqat `CORS_ORIGINS` dagi aniq domenlar qabul qilinadi.
+ */
+function allowLocalNetwork(configured: readonly string[]) {
+  // 10.x, 172.16–31.x, 192.168.x va localhost — RFC 1918 xususiy diapazonlar
+  const privateHost =
+    /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/;
+
+  return (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void): void => {
+    // Origin yo'q = brauzerdan kelmagan so'rov (curl, mobil ilova, webhook)
+    if (!origin) return cb(null, true);
+    cb(null, configured.includes(origin) || privateHost.test(origin));
+  };
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -56,7 +81,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   await app.register(cors, {
     // §11: faqat ma'lum domenlar. `*` ishlatilmaydi.
-    origin: env.corsOrigins,
+    origin: env.isProd ? env.corsOrigins : allowLocalNetwork(env.corsOrigins),
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
@@ -151,8 +176,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   await app.register(authRoutes);
   await app.register(dealRoutes);
+  await app.register(chatRoutes);
   await app.register(walletRoutes);
   await app.register(webhookRoutes);
+  await app.register(clickRoutes);
   await app.register(mockPayRoutes);
   await app.register(adminRoutes);
 

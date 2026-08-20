@@ -4,9 +4,10 @@ import { Header } from '@/components/Header';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Escrow.uz — Xavfsiz savdo platformasi',
+  title: 'ishonchli.uz — Xavfsiz savdo platformasi',
   description:
-    'Pul platformada muzlatib turiladi va faqat siz tovarni olganingizni tasdiqlaganingizdan keyin sotuvchiga o\'tadi.',
+    'Pul platformada muzlatib turiladi va faqat siz olganingizni tasdiqlaganingizdan keyin ' +
+    'sotuvchiga o\'tadi. Jismoniy tovar ham, o\'yin akkaunti ham.',
 };
 
 export const viewport: Viewport = {
@@ -21,10 +22,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen">
         <AuthProvider>
           <Header />
-          <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">{children}</main>
+          <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
           <footer className="mt-16 border-t border-slate-200 bg-white">
-            <div className="mx-auto max-w-5xl px-4 py-8 text-center text-sm text-slate-500 sm:px-6">
-              Escrow.uz — pul faqat tovar yetib borgach o&apos;tadi
+            <div className="mx-auto max-w-5xl px-4 py-8 pb-[max(2rem,env(safe-area-inset-bottom))] text-center text-sm text-slate-500 sm:px-6">
+              ishonchli.uz — pul faqat siz tasdiqlaganingizdan keyin o&apos;tadi
             </div>
           </footer>
         </AuthProvider>

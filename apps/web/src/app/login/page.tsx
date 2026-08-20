@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -49,9 +50,17 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto max-w-md py-8">
+      <Image
+        src="/logo.png"
+        alt={uz.common.appName}
+        width={720}
+        height={564}
+        priority
+        className="mx-auto mb-6 h-auto w-40"
+      />
       <h1 className="text-2xl font-semibold text-slate-900">{uz.auth.loginTitle}</h1>
 
-      <form onSubmit={onSubmit} className="card mt-6 space-y-4 p-6">
+      <form onSubmit={onSubmit} className="card mt-6 space-y-4 p-4 sm:p-6">
         <ErrorBox message={error} />
 
         <Field label={uz.auth.email}>

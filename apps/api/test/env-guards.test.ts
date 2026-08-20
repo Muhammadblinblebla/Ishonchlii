@@ -124,6 +124,41 @@ describe('To\'lov provayderi sozlamalari', () => {
   });
 });
 
+describe('Click sozlamalari', () => {
+  const FULL = {
+    PAYMENT_PROVIDER: 'click',
+    CLICK_SERVICE_ID: '11111',
+    CLICK_MERCHANT_ID: '22222',
+    CLICK_SECRET_KEY: 'maxfiy-kalit',
+    CLICK_MERCHANT_USER_ID: '33333',
+    NODE_ENV: 'development',
+  };
+
+  it('to\'liq sozlanganda ishga tushadi va OGOHLANTIRADI', async () => {
+    const r = await probe(FULL);
+    expect(r.started, r.output).toBe(true);
+    // Click'da sandbox yo'q — har to'lov haqiqiy pul
+    expect(r.output).toContain('HAQIQIY');
+  });
+
+  // Har bir kalit ALOHIDA majburiy: bittasi yetishmasa ham to'lov
+  // oqimi buziladi, lekin buni faqat xaridor pul to'lash paytida
+  // bilib qolardik.
+  for (const missing of [
+    'CLICK_SERVICE_ID',
+    'CLICK_MERCHANT_ID',
+    'CLICK_SECRET_KEY',
+    'CLICK_MERCHANT_USER_ID',
+  ]) {
+    it(`${missing} bo'sh bo'lsa BLOKLANADI`, async () => {
+      const r = await probe({ ...FULL, [missing]: '' });
+      expect(r.started, r.output).toBe(false);
+      // Xato xabari qaysi o'zgaruvchi yetishmayotganini ANIQ aytishi kerak
+      expect(r.output).toContain(missing);
+    });
+  }
+});
+
 describe('Auth sozlamalari', () => {
   it('JWT sirlari bir xil bo\'lsa BLOKLANADI', async () => {
     // Aks holda access tokenni refresh sifatida ishlatib bo'lardi

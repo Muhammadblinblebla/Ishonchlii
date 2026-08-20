@@ -35,18 +35,26 @@ export async function notifyTransition(
   const { deal, to, version } = params;
 
   const amount = formatTiyin(escrowAmountOf(deal));
-  const base = { dealTitle: deal.title, amount };
+  // `dealType` har bir xabarga qo'shiladi: o'yin akkauntida "tovar yuborish"
+  // haqida gapirish xaridorni chalkashtiradi — hech narsa yuborilmaydi.
+  const base = { dealTitle: deal.title, amount, dealType: deal.dealType };
 
   /** Har o'tish uchun noyob kalit — takroriy xat ketmaydi. */
   const key = (suffix: string): string => `deal:${deal.id}:v${version}:${suffix}`;
 
   const items: EnqueueParams[] = [];
 
+  /**
+   * `userId` NULL bo'lishi mumkin: savdo kalit so'z bilan yaratilganda
+   * xaridor hali noma'lum. Bunday holda xabar shunchaki qo'shilmaydi —
+   * yuboriladigan manzil yo'q.
+   */
   const add = (
-    userId: string,
+    userId: string | null,
     template: EmailTemplate,
     extra: Partial<Omit<import('@escrowuz/shared').EmailContext, 'name'>> = {},
   ): void => {
+    if (!userId) return;
     items.push({
       userId,
       template,
@@ -129,19 +137,21 @@ export async function notifyTransition(
 }
 
 /**
- * Yangi savdo yaratilganda qarshi tomonga taklif.
+ * Savdoni xaridor band qilganda SOTUVCHIGA xabar.
  *
- * `creatorName` chaqiruvchidan keladi — bu yerda bazadan qidirmaymiz,
+ * Savdo yaratilganda xabar YUBORILMAYDI: xaridor hali noma'lum, kalit so'z
+ * esa sotuvchining o'zida. Xabar xaridor kalit so'zni kiritib savdoni
+ * ochgandan keyin ketadi.
+ *
+ * `counterpartyName` chaqiruvchidan keladi — bu yerda bazadan qidirmaymiz,
  * chunki funksiya savdo tranzaksiyasi ichida ishlaydi.
  */
-export async function notifyDealCreated(
+export async function notifyDealClaimed(
   deal: Deal,
-  creatorId: string,
-  creatorName: string,
+  recipientId: string,
+  counterpartyName: string,
   tx: Prisma.TransactionClient,
 ): Promise<void> {
-  const recipientId = deal.buyerId === creatorId ? deal.sellerId : deal.buyerId;
-
   await enqueueMany(
     [
       {
@@ -151,9 +161,10 @@ export async function notifyDealCreated(
         context: {
           dealTitle: deal.title,
           amount: formatTiyin(escrowAmountOf(deal)),
-          counterparty: creatorName,
+          counterparty: counterpartyName,
+          dealType: deal.dealType,
         },
-        dedupeKey: `deal:${deal.id}:invited`,
+        dedupeKey: `deal:${deal.id}:claimed`,
       },
     ],
     tx,

@@ -1,6 +1,12 @@
 'use client';
 
-import { statusLabels, type DealStatus } from '@escrowuz/shared';
+import {
+  dealTypeRule,
+  statusLabels,
+  statusLabelFor,
+  type DealStatus,
+  type DealType,
+} from '@escrowuz/shared';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 
@@ -23,19 +29,29 @@ const STATUS_STYLES: Record<DealStatus, string> = {
   PAYMENT_MISMATCH: 'bg-orange-50 text-orange-800 ring-orange-200',
 };
 
-export function StatusBadge({ status }: { status: DealStatus }) {
+export function StatusBadge({
+  status,
+  dealType,
+}: {
+  status: DealStatus;
+  /** Berilsa holat nomi turga moslashadi: "Yuborildi" ↔ "Topshirildi". */
+  dealType?: DealType;
+}) {
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${STATUS_STYLES[status]}`}
     >
-      {statusLabels[status]}
+      {dealType ? statusLabelFor(status, dealType) : statusLabels[status]}
     </span>
   );
 }
 
 // ─── Progress qadamlari (§10) ────────────────────────────────────────────────
 
-const STEPS = ['Kelishuv', 'To\'lov', 'Yuborildi', 'Tasdiqlandi'] as const;
+/** Uchinchi qadam savdo turiga qarab nomlanadi ("Yuborildi" / "Topshirildi"). */
+function stepsFor(dealType: DealType | undefined): readonly string[] {
+  return ['Kelishuv', 'To\'lov', dealTypeRule(dealType).text.handoverStep, 'Tasdiqlandi'];
+}
 
 /** Savdo qaysi qadamda ekanini aniqlaydi. -1 = to'xtatilgan. */
 function stepIndexOf(status: DealStatus): number {
@@ -51,18 +67,25 @@ function stepIndexOf(status: DealStatus): number {
   }
 }
 
-export function ProgressSteps({ status }: { status: DealStatus }) {
+export function ProgressSteps({
+  status,
+  dealType,
+}: {
+  status: DealStatus;
+  dealType?: DealType;
+}) {
   const current = stepIndexOf(status);
   const halted = current === -1;
+  const steps = stepsFor(dealType);
 
   return (
-    <ol className="flex items-center gap-1 sm:gap-2" aria-label="Savdo bosqichlari">
-      {STEPS.map((label, i) => {
+    <ol className="flex items-center gap-0.5 sm:gap-2" aria-label="Savdo bosqichlari">
+      {steps.map((label, i) => {
         const done = !halted && current > i;
         const active = !halted && current === i + 1;
 
         return (
-          <li key={label} className="flex flex-1 items-center gap-1 sm:gap-2">
+          <li key={label} className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
             <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
               <div
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-2 ${
@@ -78,14 +101,14 @@ export function ProgressSteps({ status }: { status: DealStatus }) {
                 {done ? '✓' : i + 1}
               </div>
               <span
-                className={`truncate text-center text-[11px] leading-tight sm:text-xs ${
+                className={`w-full truncate text-center text-[10px] leading-tight sm:text-xs ${
                   done || active ? 'font-medium text-slate-900' : 'text-slate-400'
                 }`}
               >
                 {label}
               </span>
             </div>
-            {i < STEPS.length - 1 && (
+            {i < steps.length - 1 && (
               <div
                 className={`hidden h-0.5 w-full flex-1 sm:block ${
                   done ? 'bg-emerald-500' : 'bg-slate-200'
@@ -147,12 +170,12 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center sm:pb-4">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+        className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl sm:p-6"
       >
         <h2 id="confirm-title" className="text-lg font-semibold text-slate-900">
           {title}
@@ -190,7 +213,7 @@ export function EmptyState({
   actionLabel?: string;
 }) {
   return (
-    <div className="card px-6 py-12 text-center">
+    <div className="card px-4 py-10 text-center sm:px-6 sm:py-12">
       <p className="font-medium text-slate-900">{title}</p>
       <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">{text}</p>
       {actionHref && actionLabel && (

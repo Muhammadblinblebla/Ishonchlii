@@ -43,6 +43,26 @@ enum DealStatus {
   PAYMENT_MISMATCH
 }
 
+/// packages/shared/src/deal-types.ts bilan AYNAN mos bo'lishi shart.
+///
+/// Pul yo'li ikkalasida BIR XIL — farq faqat sotuvchi nimani topshirishida
+/// va xaridorga tasdiqlash uchun qancha vaqt berilishida.
+enum DealType {
+  /// Jismoniy tovar — pochta/kuryer, trek-raqam bilan
+  PHYSICAL
+  /// eFootball akkaunt — CHAT orqali topshiriladi
+  GAME_ACCOUNT
+  /// Raqamli mahsulot — PDF, video, mp3, havola yoki matn
+  DIGITAL
+}
+
+/// Raqamli mahsulot nima ko'rinishda topshiriladi.
+enum ContentKind {
+  link
+  text
+  file
+}
+
 enum CommissionPayer {
   buyer
   seller
@@ -118,6 +138,8 @@ model User {
   payouts          Payout[]
   refreshTokens    RefreshToken[]
   notifications    Notification[]
+  messages         Message[]
+  walletHolds      WalletHold[]
 
   @@index([deletedAt])
   @@map("users")
@@ -146,11 +168,41 @@ model RefreshToken {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Deal {
-  id          String @id @default(uuid()) @db.Uuid
-  buyerId     String @map("buyer_id") @db.Uuid
-  sellerId    String @map("seller_id") @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  /// XARIDOR HALI NOMA'LUM BO'LISHI MUMKIN.
+  ///
+  /// Sotuvchi savdoni KALIT SO'Z bilan yaratadi va xaridorni oldindan
+  /// bilmaydi. Xaridor kalit so'zni kiritib savdoni "band qilgach"
+  /// shu maydon to'ldiriladi. To'lov faqat shundan keyin mumkin.
+  buyerId     String? @map("buyer_id") @db.Uuid
+  sellerId    String  @map("seller_id") @db.Uuid
   title       String
-  description String @default("")
+  description String  @default("")
+
+  /// Nima sotilyapti. Auto-release muddati va topshirish usuli shunga bog'liq.
+  dealType DealType @default(PHYSICAL) @map("deal_type")
+  /// GAME_ACCOUNT uchun o'yin nomi. Hozircha faqat "eFootball".
+  game     String?
+
+  /// KALIT SO'Z — xaridor savdoni shu orqali topadi.
+  ///
+  /// Sotuvchi o'ylab topadi va xaridorga aytadi (Telegram, Instagram, og'zaki).
+  /// Xaridor uni kiritib savdoni ochadi — email almashish shart emas.
+  keyword String
+
+  /// Qidiruv uchun kichik harfga o'girilgan nusxa.
+  ///
+  /// Alohida ustun: qidiruvda `LOWER(keyword)` ishlatilsa indeks ishlamaydi
+  /// va har qidiruv butun jadvalni skanerlaydi.
+  ///
+  /// BAND QILINMAGAN savdolar orasida NOYOB (qisman unique indeks,
+  /// migratsiyada). Ikkita ochiq savdo bir xil kalit so'zga ega bo'lsa,
+  /// xaridor qaysi biriga to'layotganini bilmasdi.
+  keywordNormalized String @map("keyword_normalized")
+
+  /// Xaridor savdoni band qilgan vaqt.
+  claimedAt DateTime? @map("claimed_at")
 
   /// Kelishilgan TOVAR NARXI (tiyin). Xaridor to'laydigan summa emas —
   /// u `commissionPayer` ga qarab hisoblanadi, `packages/shared/src/money.ts` ga qarang.
@@ -181,12 +233,16 @@ model Deal {
   autoReleaseAt DateTime? @map("auto_release_at")
   deletedAt     DateTime? @map("deleted_at")
 
-  buyer  User @relation("BuyerDeals", fields: [buyerId], references: [id])
-  seller User @relation("SellerDeals", fields: [sellerId], references: [id])
+  buyer  User? @relation("BuyerDeals", fields: [buyerId], references: [id])
+  seller User  @relation("SellerDeals", fields: [sellerId], references: [id])
 
   events        DealEvent[]
   ledgerEntries LedgerEntry[]
   shipments     Shipment[]
+  handover      AccountHandover?
+  content       DigitalContent?
+  messages      Message[]
+  holds         WalletHold[]
   disputes      Dispute[]
   invoices      Invoice[]
   notifications Notification[]
@@ -195,6 +251,7 @@ model Deal {
   @@index([sellerId, status])
   @@index([status, autoReleaseAt])
   @@index([status, paymentDueAt])
+  @@index([keywordNormalized])
   @@map("deals")
 }
 
@@ -280,6 +337,130 @@ model Shipment {
 
   @@index([dealId])
   @@map("shipments")
+}
+
+/// O'YIN AKKAUNTI TOPSHIRILISHI.
+///
+/// `Shipment` ning raqamli muqobili: pochta o'rniga login ma'lumotlari.
+///
+/// XAVFSIZLIK:
+///  • Login va parol OCHIQ saqlanmaydi — AES-256-GCM bilan shifrlanadi
+///    (apps/api/src/lib/crypto.ts). Baza sizib chiqsa ham ma'lumotlar o'qilmaydi.
+///  • Kalit `CREDENTIALS_SECRET` muhit o'zgaruvchisida, bazada EMAS.
+///  • Faqat XARIDOR ochib ko'ra oladi va faqat pul escrowga tushgandan keyin.
+///    Sotuvchi ham, admin ham ochiq matnni ko'rmaydi.
+///  • Savdo bittasidan ortiq topshirish qabul qilmaydi (@unique) — sotuvchi
+///    keyin ma'lumotni almashtirib xaridorni akkauntdan mahrum qila olmaydi.
+model AccountHandover {
+  id     String @id @default(uuid()) @db.Uuid
+  dealId String @unique @map("deal_id") @db.Uuid
+
+  /// Shifrlangan JSON: { login, password, extra }. Format:
+  /// `v1.<iv-base64>.<authTag-base64>.<ciphertext-base64>`
+  credentialsCipher String @map("credentials_cipher")
+
+  /// Xaridor birinchi marta ochib ko'rgan vaqt. Nizoda dalil bo'ladi:
+  /// "ma'lumotlarni umuman ko'rmadim" degan da'voni tekshirish uchun.
+  viewedAt DateTime? @map("viewed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  deal Deal @relation(fields: [dealId], references: [id])
+
+  @@map("account_handovers")
+}
+
+/// RAQAMLI MAHSULOT — havola, matn yoki fayl.
+///
+/// XAVFSIZLIK: `AccountHandover` bilan bir xil qoidalar.
+///  • Havola va matn AES-256-GCM bilan SHIFRLANADI — baza sizib chiqsa ham
+///    to'lanmagan mahsulot oshkor bo'lmaydi.
+///  • Fayl Supabase Storage'da; bu yerda faqat uning kaliti saqlanadi.
+///    Xaridorga muddatli (1 soat) imzolangan havola beriladi.
+///  • Faqat XARIDOR ko'radi va faqat pul escrowga tushgandan keyin.
+///  • Yozuv O'ZGARMAS (trigger) — sotuvchi topshirgach almashtira olmaydi.
+model DigitalContent {
+  id     String @id @default(uuid()) @db.Uuid
+  dealId String @unique @map("deal_id") @db.Uuid
+
+  kind ContentKind
+
+  /// Shifrlangan JSON. `link`/`text` uchun qiymatning o'zi, `file` uchun
+  /// saqlash kaliti. Format: `v1.<iv>.<tag>.<ciphertext>`
+  payloadCipher String @map("payload_cipher")
+
+  /// `file` uchun ko'rsatiladigan ma'lumot (shifrlanmaydi — sir emas).
+  fileName  String? @map("file_name")
+  fileSize  Int?    @map("file_size")
+  /// Fayl TARKIBIDAN aniqlangan MIME (kengaytmadan emas).
+  fileMime  String? @map("file_mime")
+
+  /// Xaridor birinchi marta ochib ko'rgan vaqt — nizoda dalil.
+  viewedAt  DateTime? @map("viewed_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  deal Deal @relation(fields: [dealId], references: [id])
+
+  @@map("digital_contents")
+}
+
+/// CHAT — eFootball akkauntini topshirish uchun.
+///
+/// To'lovdan OLDIN yozishib bo'lmaydi: aks holda tomonlar platformadan
+/// tashqarida kelishib, komissiyasiz savdo qilib ketishardi.
+///
+/// Xabar matni SHIFRLANADI: akkaunt paroli aynan shu yerdan o'tadi va
+/// baza nusxasida ochiq yotmasligi kerak.
+model Message {
+  id       String @id @default(uuid()) @db.Uuid
+  dealId   String @map("deal_id") @db.Uuid
+  senderId String @map("sender_id") @db.Uuid
+
+  /// AES-256-GCM bilan shifrlangan matn.
+  bodyCipher String @map("body_cipher")
+
+  /// Qarshi tomon o'qigan vaqt. Nizoda "ko'rmadim" da'vosini tekshiradi.
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  deal   Deal @relation(fields: [dealId], references: [id])
+  sender User @relation(fields: [senderId], references: [id])
+
+  @@index([dealId, createdAt])
+  @@map("messages")
+}
+
+/// HAMYONDAGI MUZLATILGAN PUL — 30 soatlik ushlab turish.
+///
+/// Savdo yakunlangach pul darhol yechib olinmaydi. Sabablari:
+///   • to'lov tizimi to'lovni qaytarib olishi mumkin (chargeback)
+///   • firibgar soxta savdo qilib pulni darhol yechib ketolmaydi
+///
+/// Pul `user:<id>:holding` hisobida turadi. Muddat tugagach fon vazifasi
+/// uni `user:<id>:available` ga ko'chiradi — bu ODDIY LEDGER YOZUVI,
+/// ya'ni ikki yoqlama hisob buzilmaydi.
+model WalletHold {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  dealId String @map("deal_id") @db.Uuid
+
+  amountTiyin BigInt @map("amount_tiyin")
+
+  /// Shu vaqtdan keyin pul yechib olinadi.
+  releaseAt  DateTime  @map("release_at")
+  /// Ko'chirilgan vaqt. `null` = hali muzlatilgan.
+  releasedAt DateTime? @map("released_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+  deal Deal @relation(fields: [dealId], references: [id])
+
+  /// Bitta savdo bo'yicha bitta muzlatish — takror yozilmaydi.
+  @@unique([dealId])
+  @@index([releasedAt, releaseAt])
+  @@index([userId, releasedAt])
+  @@map("wallet_holds")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

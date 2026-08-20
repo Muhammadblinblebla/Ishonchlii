@@ -1,6 +1,6 @@
 # Deploy — doimiy manzil olish
 
-Maqsad: checkout.uz webhook yubora oladigan **doimiy** manzilga ega bo'lish.
+Maqsad: Click callback yubora oladigan **doimiy** HTTPS manzilga ega bo'lish.
 
 ```
 API  →  Railway    →  https://<nom>.up.railway.app
@@ -61,13 +61,17 @@ JWT_REFRESH_SECRET=<yangi, birinchisidan boshqa>
 # Vercel manzilini olgach to'ldiring (3-qadam)
 CORS_ORIGINS=https://<web-nomi>.vercel.app
 
-# checkout.uz
-PAYMENT_PROVIDER=checkout_uz
-CHECKOUT_UZ_BASE_URL=https://checkout.uz/api/v1
-CHECKOUT_UZ_API_KEY=<kabinetdan>
-CHECKOUT_UZ_ENV=production
-# Railway manzilini olgach to'ldiring (2-qadam)
-CHECKOUT_UZ_WEBHOOK_URL=https://<api-nomi>.up.railway.app/webhooks/checkout-uz
+# O'yin akkauntlarini shifrlash kaliti — BIR MARTA o'rnatiladi
+#   openssl rand -base64 48
+# ⚠️ Keyin O'ZGARTIRMANG: sotilgan akkauntlar ochilmay qoladi
+CREDENTIALS_SECRET=<yangi, JWT sirlaridan boshqa>
+
+# Click — to'rttasi ham merchant.click.uz kabinetidan
+PAYMENT_PROVIDER=click
+CLICK_SERVICE_ID=<kabinetdan>
+CLICK_MERCHANT_ID=<kabinetdan>
+CLICK_SECRET_KEY=<kabinetdan>
+CLICK_MERCHANT_USER_ID=<kabinetdan>
 
 API_PORT=3001
 API_HOST=0.0.0.0
@@ -86,16 +90,19 @@ Railway → **Settings → Networking → Generate Domain**
 
 Olingan manzil, masalan `escrowuz-api.up.railway.app`. Endi:
 
-### 🔗 WEBHOOK URL — checkout.uz kabinetiga kiritiladigan manzil
+### 🔗 CALLBACK MANZILLARI — Click kabinetiga kiritiladi
+
+Click **ikkita** manzil so'raydi:
 
 ```
-https://escrowuz-api.up.railway.app/webhooks/checkout-uz
+Prepare URL  : https://escrowuz-api.up.railway.app/webhooks/click/prepare
+Complete URL : https://escrowuz-api.up.railway.app/webhooks/click/complete
 ```
 
-Shu manzilni **ikki joyga** yozing:
+Ikkalasi ham **merchant.click.uz kabinetiga** yoziladi (`.env` ga emas —
+Click bizga o'zi murojaat qiladi, biz unga emas).
 
-1. Railway Variables → `CHECKOUT_UZ_WEBHOOK_URL`
-2. checkout.uz kabineti → callback/webhook maydoni
+⚠️ Manzillar HTTPS bo'lishi shart. HTTP'ni Click qabul qilmaydi.
 
 Tekshirish:
 
@@ -131,19 +138,42 @@ https://escrowuz.vercel.app
 
 ---
 
-## 4. Migratsiyalar
+## 4. Migratsiyalar va toza baza
 
 `railway.json` dagi `startCommand` har deploy'da `prisma migrate deploy` ni
-ishga tushiradi — qo'lda hech narsa qilish shart emas.
+ishga tushiradi — migratsiyalar uchun qo'lda hech narsa qilish shart emas.
 
-Baza allaqachon migratsiya qilingan, shuning uchun birinchi deploy'da
-"No pending migrations" chiqadi.
+### Bazani tozalash
+
+Ishlab chiqish davomida test savdolari to'planib qoladi. Haqiqiy
+foydalanuvchilarni qabul qilishdan oldin bazani tozalang:
+
+```bash
+npm run db:reset -- --hammasini-ochirish   # HAMMASINI o'chiradi
+npm run db:seed                             # faqat administrator
+npm run db:verify                           # 15 ta himoya tekshiruvi
+npm run ledger:check                        # yig'indi 0 bo'lishi kerak
+```
+
+`ledger_entries` va `deal_events` append-only — `DELETE` ni baza triggeri
+bloklaydi. Shuning uchun tozalash sxemani qayta quradi.
+
+⚠️ **Qaytarib bo'lmaydi.** Haqiqiy savdolar boshlangandan keyin bu buyruqni
+ISHLATMANG — moliyaviy tarix yo'qoladi.
+
+### Administrator
+
+`db:seed` `.env` dagi `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` bilan
+**bitta** admin yaratadi. Demo foydalanuvchilar yaratilmaydi.
+
+Mavjud admin paroli qayta yozilmaydi — ya'ni har deploy'da parol
+`.env` dagi qiymatga qaytib ketmaydi.
 
 ---
 
 ## 5. Birinchi haqiqiy to'lov — ehtiyot bo'ling
 
-checkout.uz'da **sandbox yo'q**. Birinchi to'lov haqiqiy pul bilan bo'ladi.
+Click'da **sandbox yo'q**. Birinchi to'lov haqiqiy pul bilan bo'ladi.
 
 Tavsiya qilingan tartib:
 
@@ -155,7 +185,7 @@ Tavsiya qilingan tartib:
 6. `npm run ledger:check` — yig'indi 0 ekanini tasdiqlang
 
 Agar 1-3 qadamda savdo `AWAITING_PAYMENT` da qolib qolsa — webhook yetib
-kelmagan. Railway loglarini tekshiring: `/webhooks/checkout-uz` so'rovi
+kelmagan. Railway loglarini tekshiring: `/webhooks/click/complete` so'rovi
 ko'rinadimi.
 
 ---
@@ -173,7 +203,7 @@ tugallanishi kerak:
 
 Uchinchisi deploy uchun alohida muhim: **har bir yangi deploy paytida
 server ~30 soniya o'chiq bo'ladi.** O'sha oynada kelgan webhook butunlay
-yo'qoladi, chunki checkout.uz uni qayta yubormaydi.
+yo'qolishi mumkin. `reconcile-payments` fon vazifasi uni topib beradi.
 
 Shu sababli **avval 7-bosqichni (fon vazifalari) tugatishni tavsiya qilaman**,
 keyin deploy qilish. Aks holda birinchi haqiqiy to'lovda pul "yo'qolib"

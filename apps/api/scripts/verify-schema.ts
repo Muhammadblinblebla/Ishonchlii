@@ -98,11 +98,18 @@ async function makeDeal(
   sellerId: string,
   status = 'DRAFT',
 ): Promise<string> {
+  // Kalit so'z NOYOB bo'lishi shart (band qilinmagan savdolar orasida).
+  // Tasodifiy qiymat: tekshiruvlar ketma-ket ishlaydi va bir-biriga
+  // xalaqit bermasligi kerak.
+  const keyword = `verify-${Math.random().toString(36).slice(2, 12)}`;
+
   const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
     `INSERT INTO deals
-       (id, buyer_id, seller_id, title, description, amount_tiyin, commission_tiyin,
+       (id, buyer_id, seller_id, title, description, keyword, keyword_normalized,
+        amount_tiyin, commission_tiyin,
         commission_bps, commission_payer, currency, status, version, created_at, updated_at)
      VALUES (gen_random_uuid(), '${buyerId}', '${sellerId}', 'Tekshiruv savdosi', '',
+             '${keyword}', '${keyword}',
              10000000, 300000, 300, 'seller', 'UZS', '${status}', 0, now(), now())
      RETURNING id`,
   );

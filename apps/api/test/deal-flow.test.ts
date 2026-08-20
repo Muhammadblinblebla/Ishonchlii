@@ -11,12 +11,23 @@ import { prisma } from '../src/db/prisma.js';
 import { getBalance } from '../src/ledger/ledger.service.js';
 import { MockPaymentProvider } from '../src/payments/mock.provider.js';
 import { setPaymentProvider } from '../src/payments/index.js';
+import { applyBps, COMMISSION_POLICY } from '@escrowuz/shared';
 import { cleanupTestUsers, createTestUser, makeApp, uniqueEmail } from './helpers/setup.js';
 
 let app: FastifyInstance;
 let provider: MockPaymentProvider;
 
 const AMOUNT = '10000000'; // 100 000 so'm, tiyinda
+
+/**
+ * Kutilayotgan summalar SIYOSATDAN hisoblanadi, qo'lda yozilmaydi.
+ *
+ * Aks holda komissiya stavkasi o'zgarganda o'nlab test yiqilardi va
+ * ularning qaysi biri haqiqiy xato, qaysi biri shunchaki eskirgani
+ * noma'lum bo'lib qolardi.
+ */
+const COMMISSION = applyBps(10_000_000n, COMMISSION_POLICY.rateBps);
+const SELLER_GETS = 10_000_000n - COMMISSION;
 
 type Actor = Awaited<ReturnType<typeof createTestUser>>;
 
@@ -37,19 +48,28 @@ async function createDeal(seller: Actor, buyer: Actor, amountTiyin = AMOUNT) {
       description: 'Sinov uchun',
       amountTiyin,
       commissionPayer: 'seller',
-      counterpartyEmail: buyer.email,
-      myRole: 'seller',
+      keyword: uniqueKeyword(),
     },
   });
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as Record<string, any>)['deal'];
 }
 
+/**
+ * Har savdo uchun NOYOB kalit so'z.
+ *
+ * Band qilinmagan savdolar orasida kalit so'z noyob bo'lishi shart
+ * (qisman unique indeks) — takrorlansa savdo yaratish rad etiladi.
+ */
+function uniqueKeyword(): string {
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /** Savdoni FUNDED holatiga olib boradi. */
 async function fundDeal(dealId: string, buyer: Actor, options: { amountTiyin?: bigint } = {}) {
   const accept = await app.inject({
     method: 'POST',
-    url: `/deals/${dealId}/accept`,
+    url: `/deals/${dealId}/claim`,
     headers: auth(buyer),
     payload: {},
   });
@@ -115,7 +135,9 @@ describe('§12 — To\'liq muvaffaqiyatli savdo', () => {
     await fundDeal(deal.id, buyer);
     expect((await getDeal(deal.id, buyer)).body['deal'].status).toBe('FUNDED');
 
-    // Pul muzlatilgan — sotuvchi hali yecha olmaydi
+    // Pul muzlatilgan — sotuvchi hali yecha olmaydi.
+    // Escrowda TOVAR NARXI turadi; xaridor bundan ko'proq to'lagan,
+    // farqni to'lov tizimi ushlab qolgan.
     const funded = await getBalance(seller.id);
     expect(funded.pendingTiyin).toBe(10_000_000n);
     expect(funded.availableTiyin).toBe(0n);
@@ -138,10 +160,22 @@ describe('§12 — To\'liq muvaffaqiyatli savdo', () => {
     expect(confirm.statusCode, confirm.body).toBe(200);
     expect((confirm.json() as Record<string, any>)['deal'].status).toBe('DELIVERED');
 
-    // Pul sotuvchida, komissiya ushlangan
+    // Pul sotuvchida, komissiya ushlangan.
+    //
+    // ⚠️ `available` EMAS, `holding`: savdo yakunlangach pul 30 soat
+    // muzlatib turiladi (chargeback himoyasi). `available` ga fon
+    // vazifasi muddat tugagach ko'chiradi.
     const done = await getBalance(seller.id);
-    expect(done.availableTiyin).toBe(9_700_000n);
+    expect(done.holdingTiyin).toBe(SELLER_GETS);
+    expect(done.availableTiyin).toBe(0n);
     expect(done.pendingTiyin).toBe(0n);
+
+    // Muzlatish yozuvi ham qo'yilgan bo'lishi shart — busiz pul
+    // `holding` da mangu qolib ketardi.
+    const hold = await prisma.walletHold.findUnique({ where: { dealId: deal.id } });
+    expect(hold, 'muzlatish yozuvi yo\'q').not.toBeNull();
+    expect(hold!.amountTiyin).toBe(SELLER_GETS);
+    expect(hold!.releasedAt).toBeNull();
   });
 
   it('har yakunda ledger yig\'indisi = 0', async () => {
@@ -189,8 +223,8 @@ describe('§12 — Ikki marta confirm: pul ikki marta o\'tmaydi', () => {
     expect(second.statusCode).toBe(409);
 
     const balanceAfterSecond = await getBalance(seller.id);
-    expect(balanceAfterSecond.availableTiyin).toBe(balanceAfterFirst.availableTiyin);
-    expect(balanceAfterFirst.availableTiyin).toBe(9_700_000n);
+    expect(balanceAfterSecond.holdingTiyin).toBe(balanceAfterFirst.holdingTiyin);
+    expect(balanceAfterFirst.holdingTiyin).toBe(SELLER_GETS);
   });
 });
 
@@ -218,7 +252,7 @@ describe('§12 — Ikkita PARALLEL confirm (race condition)', () => {
     expect(ok.length, 'faqat bitta so\'rov muvaffaqiyatli bo\'lishi kerak').toBe(1);
 
     const balance = await getBalance(seller.id);
-    expect(balance.availableTiyin).toBe(9_700_000n); // 19 400 000 emas
+    expect(balance.holdingTiyin).toBe(SELLER_GETS); // ikki barobari EMAS
 
     const entries = await prisma.ledgerEntry.findMany({ where: { dealId: deal.id } });
     expect(entries.reduce((s, e) => s + e.amount, 0n)).toBe(0n);
@@ -255,7 +289,7 @@ describe('§12 — Webhook idempotentligi', () => {
     const deal = await createDeal(seller, buyer);
 
     await app.inject({
-      method: 'POST', url: `/deals/${deal.id}/accept`, headers: auth(buyer), payload: {},
+      method: 'POST', url: `/deals/${deal.id}/claim`, headers: auth(buyer), payload: {},
     });
     const pay = await app.inject({
       method: 'POST', url: `/deals/${deal.id}/pay`, headers: auth(buyer), payload: {},
@@ -282,7 +316,7 @@ describe('§12 — Webhook idempotentligi', () => {
     const deal = await createDeal(seller, buyer);
 
     await app.inject({
-      method: 'POST', url: `/deals/${deal.id}/accept`, headers: auth(buyer), payload: {},
+      method: 'POST', url: `/deals/${deal.id}/claim`, headers: auth(buyer), payload: {},
     });
     const pay = await app.inject({
       method: 'POST', url: `/deals/${deal.id}/pay`, headers: auth(buyer), payload: {},
@@ -492,8 +526,7 @@ describe('§12 — Komissiya tiyingacha aniq', () => {
         title: 'Test',
         amountTiyin: AMOUNT,
         commissionPayer: 'seller',
-        counterpartyEmail: buyer.email,
-        myRole: 'seller',
+        keyword: uniqueKeyword(),
         // Mijoz komissiyani 0 qilmoqchi — e'tiborga olinmasligi kerak
         commissionTiyin: '0',
       },
@@ -501,7 +534,9 @@ describe('§12 — Komissiya tiyingacha aniq', () => {
 
     expect(res.statusCode).toBe(201);
     const deal = (res.json() as Record<string, any>)['deal'];
-    expect(deal.commissionTiyin).toBe('300000'); // 0 emas
+    // Mijoz yuborgan '0' e'tiborga olinmaydi — server siyosatdan hisoblaydi
+    expect(deal.commissionTiyin).toBe(COMMISSION.toString());
+    expect(deal.commissionTiyin).not.toBe('0');
   });
 
   it('toq summada ham yig\'indi aniq chiqadi', async () => {
@@ -523,33 +558,58 @@ describe('§12 — Komissiya tiyingacha aniq', () => {
     expect(entries.reduce((s, e) => s + e.amount, 0n)).toBe(0n);
 
     const balance = await getBalance(seller.id);
-    // 333 300 * 3% = 9 999 (pastga yaxlitlangan)
-    expect(balance.availableTiyin).toBe(333_300n - 9_999n);
+    // Yaxlitlash PASTGA ketadi — platforma o'ziga ortiqcha yozmaydi
+    expect(balance.holdingTiyin).toBe(
+      333_300n - applyBps(333_300n, COMMISSION_POLICY.rateBps),
+    );
   });
 });
 
 describe('Savdo yaratish tekshiruvlari', () => {
-  it('o\'zi bilan savdo qila olmaydi', async () => {
+  it('SOTUVCHI o\'z savdosini sotib ola olmaydi', async () => {
+    // Kalit so'z oqimida bu tekshiruv YARATISHDA emas, BAND QILISHDA
+    // bo'ladi: yaratilayotganda xaridor hali noma'lum.
     const user = await makeActor('self');
-    const res = await app.inject({
+    const created = await app.inject({
       method: 'POST', url: '/deals', headers: auth(user),
-      payload: {
-        title: 'Test', amountTiyin: AMOUNT, counterpartyEmail: user.email, myRole: 'seller',
-      },
+      payload: { title: 'Test', amountTiyin: AMOUNT, keyword: uniqueKeyword() },
     });
-    expect(res.statusCode).toBe(400);
+    expect(created.statusCode).toBe(201);
+    const deal = (created.json() as Record<string, any>)['deal'];
+
+    const claim = await app.inject({
+      method: 'POST', url: `/deals/${deal.id}/claim`, headers: auth(user), payload: {},
+    });
+    expect(claim.statusCode).toBe(400);
   });
 
-  it('mavjud bo\'lmagan foydalanuvchi bilan savdo yaratib bo\'lmaydi', async () => {
-    const user = await makeActor('nouser');
-    const res = await app.inject({
-      method: 'POST', url: '/deals', headers: auth(user),
-      payload: {
-        title: 'Test', amountTiyin: AMOUNT,
-        counterpartyEmail: 'yoq@example.com', myRole: 'seller',
-      },
+  it('BIR XIL kalit so\'z bilan ikkinchi ochiq savdo yaratib bo\'lmaydi', async () => {
+    // Aks holda xaridor qaysi savdoga to'layotganini bilmasdi.
+    const seller = await makeActor('dupkw');
+    const keyword = uniqueKeyword();
+
+    const first = await app.inject({
+      method: 'POST', url: '/deals', headers: auth(seller),
+      payload: { title: 'Birinchi', amountTiyin: AMOUNT, keyword },
     });
-    expect(res.statusCode).toBe(400);
+    expect(first.statusCode).toBe(201);
+
+    const second = await app.inject({
+      method: 'POST', url: '/deals', headers: auth(seller),
+      payload: { title: 'Ikkinchi', amountTiyin: AMOUNT, keyword },
+    });
+    expect(second.statusCode).toBe(400);
+  });
+
+  it('noto\'g\'ri kalit so\'z rad etiladi', async () => {
+    const seller = await makeActor('badkw');
+    for (const keyword of ['ab', 'salom dunyo', 'test!']) {
+      const res = await app.inject({
+        method: 'POST', url: '/deals', headers: auth(seller),
+        payload: { title: 'Test', amountTiyin: AMOUNT, keyword },
+      });
+      expect(res.statusCode, keyword).toBe(400);
+    }
   });
 
   it('juda kichik summani rad etadi', async () => {
@@ -559,7 +619,7 @@ describe('Savdo yaratish tekshiruvlari', () => {
       method: 'POST', url: '/deals', headers: auth(seller),
       payload: {
         title: 'Test', amountTiyin: '100',
-        counterpartyEmail: buyer.email, myRole: 'seller',
+        keyword: uniqueKeyword(),
       },
     });
     expect(res.statusCode).toBe(400);
@@ -568,7 +628,7 @@ describe('Savdo yaratish tekshiruvlari', () => {
   it('tokensiz savdo yaratib bo\'lmaydi', async () => {
     const res = await app.inject({
       method: 'POST', url: '/deals',
-      payload: { title: 'Test', amountTiyin: AMOUNT, counterpartyEmail: 'a@b.c', myRole: 'seller' },
+      payload: { title: 'Test', amountTiyin: AMOUNT, keyword: 'tokensiz-test' },
     });
     expect(res.statusCode).toBe(401);
   });
@@ -581,7 +641,7 @@ describe('Idempotency-Key', () => {
     const key = `test-key-${Date.now()}`;
     const payload = {
       title: 'Idempotent test', amountTiyin: AMOUNT,
-      commissionPayer: 'seller', counterpartyEmail: buyer.email, myRole: 'seller',
+      commissionPayer: 'seller', keyword: uniqueKeyword(),
     };
 
     const first = await app.inject({
@@ -616,7 +676,7 @@ describe('Idempotency-Key', () => {
       headers: { ...auth(seller), 'idempotency-key': key },
       payload: {
         title: 'Birinchi', amountTiyin: AMOUNT,
-        counterpartyEmail: buyer.email, myRole: 'seller',
+        keyword: uniqueKeyword(),
       },
     });
 
@@ -625,7 +685,7 @@ describe('Idempotency-Key', () => {
       headers: { ...auth(seller), 'idempotency-key': key },
       payload: {
         title: 'BOSHQA sarlavha', amountTiyin: AMOUNT,
-        counterpartyEmail: buyer.email, myRole: 'seller',
+        keyword: uniqueKeyword(),
       },
     });
 

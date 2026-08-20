@@ -58,7 +58,7 @@ const key = (): string => `test-${randomUUID()}`;
 describe('post() — muvozanat majburiyati', () => {
   it('muvozanatli tranzaksiyani yozadi', async () => {
     const result = await post({
-      legs: depositLegs(sellerId, AMOUNT, 'test'),
+      legs: depositLegs(sellerId, AMOUNT, 0n, 'test'),
       idempotencyKey: key(),
     });
 
@@ -127,7 +127,7 @@ describe('post() — muvozanat majburiyati', () => {
 describe('Idempotentlik — pul ikki marta o\'tmaydi (§12)', () => {
   it('bir xil kalit bilan ikkinchi chaqiruv HECH NARSA yozmaydi', async () => {
     const k = key();
-    const legs = depositLegs(sellerId, AMOUNT, 'test');
+    const legs = depositLegs(sellerId, AMOUNT, 0n, 'test');
 
     const first = await post({ legs, idempotencyKey: k });
     const second = await post({ legs, idempotencyKey: k });
@@ -144,7 +144,7 @@ describe('Idempotentlik — pul ikki marta o\'tmaydi (§12)', () => {
 
   it('10 marta ketma-ket chaqirilsa ham bir marta yoziladi', async () => {
     const k = key();
-    const legs = depositLegs(sellerId, AMOUNT, 'test');
+    const legs = depositLegs(sellerId, AMOUNT, 0n, 'test');
 
     for (let i = 0; i < 10; i++) {
       await post({ legs, idempotencyKey: k });
@@ -159,7 +159,7 @@ describe('Idempotentlik — pul ikki marta o\'tmaydi (§12)', () => {
   it('PARALLEL chaqiruvlarda ham faqat bittasi yozadi (race condition)', async () => {
     // §12: "Ikkita parallel confirm so'rovi — faqat bittasi o'tadi"
     const k = key();
-    const legs = depositLegs(sellerId, AMOUNT, 'test');
+    const legs = depositLegs(sellerId, AMOUNT, 0n, 'test');
 
     const results = await Promise.allSettled(
       Array.from({ length: 5 }, () => post({ legs, idempotencyKey: k })),
@@ -191,7 +191,7 @@ describe('To\'liq savdo sikli — pul yo\'qolmaydi', () => {
     expect(before.pendingTiyin).toBe(0n);
 
     // 1. To'lov keldi
-    await post({ legs: depositLegs(seller.id, AMOUNT, 'test'), idempotencyKey: key() });
+    await post({ legs: depositLegs(seller.id, AMOUNT, 0n, 'test'), idempotencyKey: key() });
 
     const funded = await getBalance(seller.id);
     expect(funded.pendingTiyin).toBe(AMOUNT); // muzlatilgan
@@ -216,7 +216,7 @@ describe('To\'liq savdo sikli — pul yo\'qolmaydi', () => {
 
     // Savdo yozuvi bo'lmagani uchun dealId'ni bermaymiz (FK cheklovi bor),
     // lekin tranzaksiyalar bo'yicha yig'indini tekshiramiz.
-    const t1 = await post({ legs: depositLegs(seller.id, AMOUNT, 'test'), idempotencyKey: key() });
+    const t1 = await post({ legs: depositLegs(seller.id, AMOUNT, 0n, 'test'), idempotencyKey: key() });
     const t2 = await post({
       legs: releaseLegs(seller.id, AMOUNT, AMOUNT - COMMISSION, COMMISSION),
       idempotencyKey: key(),
@@ -243,7 +243,7 @@ describe('Qaytarish', () => {
       data: { email: uniqueEmail('rf-seller'), fullName: 'S', passwordHash: 'x' },
     });
 
-    await post({ legs: depositLegs(seller.id, AMOUNT, 'test'), idempotencyKey: key() });
+    await post({ legs: depositLegs(seller.id, AMOUNT, 0n, 'test'), idempotencyKey: key() });
     await post({
       legs: refundLegs(buyer.id, seller.id, AMOUNT, AMOUNT, 0n, 0n),
       idempotencyKey: key(),
@@ -262,7 +262,7 @@ describe('Qaytarish', () => {
       data: { email: uniqueEmail('sp-seller'), fullName: 'S', passwordHash: 'x' },
     });
 
-    await post({ legs: depositLegs(seller.id, AMOUNT, 'test'), idempotencyKey: key() });
+    await post({ legs: depositLegs(seller.id, AMOUNT, 0n, 'test'), idempotencyKey: key() });
     await post({
       legs: refundLegs(buyer.id, seller.id, AMOUNT, 5_820_000n, 3_880_000n, COMMISSION),
       idempotencyKey: key(),
@@ -286,7 +286,7 @@ describe('Yechish (payout)', () => {
       data: { email: uniqueEmail('po-seller'), fullName: 'S', passwordHash: 'x' },
     });
 
-    await post({ legs: depositLegs(seller.id, AMOUNT, 'test'), idempotencyKey: key() });
+    await post({ legs: depositLegs(seller.id, AMOUNT, 0n, 'test'), idempotencyKey: key() });
     await post({
       legs: releaseLegs(seller.id, AMOUNT, AMOUNT - COMMISSION, COMMISSION),
       idempotencyKey: key(),

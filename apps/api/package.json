@@ -15,7 +15,8 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "ledger:check": "tsx scripts/check-ledger.ts",
-    "db:verify": "tsx scripts/verify-schema.ts"
+    "db:verify": "tsx scripts/verify-schema.ts",
+    "db:reset": "tsx scripts/reset-production.ts"
   },
   "dependencies": {
     "@escrowuz/shared": "*",

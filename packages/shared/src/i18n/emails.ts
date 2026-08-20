@@ -10,6 +10,8 @@
  * qolmasin.
  */
 
+import { type DealType, WALLET_HOLD_HOURS, dealTypeRule } from '../deal-types.js';
+
 export interface EmailContent {
   readonly subject: string;
   readonly heading: string;
@@ -31,6 +33,11 @@ export interface EmailContext {
   readonly reason?: string;
   /** Auto-release ogohlantirishi uchun. */
   readonly daysLeft?: number;
+  /**
+   * Savdo turi. O'yin akkauntida "tovar yuborish" haqida gapirish noto'g'ri —
+   * hech narsa yuborilmaydi, login topshiriladi.
+   */
+  readonly dealType?: DealType;
 }
 
 export type EmailTemplate =
@@ -54,6 +61,12 @@ export type EmailTemplate =
 
 export function renderEmail(template: EmailTemplate, ctx: EmailContext): EmailContent {
   const deal = `«${ctx.dealTitle}»`;
+  const rule = dealTypeRule(ctx.dealType);
+  // Uch xil topshirish usuli — matnlar har biriga moslashadi.
+  const viaChat = rule.handover === 'chat';       // eFootball akkaunt
+  const viaContent = rule.handover === 'content'; // PDF/video/havola/matn
+  const digital = viaChat || viaContent;          // ikkalasi ham pochtasiz
+  const autoReleaseDays = Math.round(rule.autoReleaseHours / 24);
 
   switch (template) {
     case 'deal.invited':
@@ -81,6 +94,31 @@ export function renderEmail(template: EmailTemplate, ctx: EmailContext): EmailCo
       };
 
     case 'deal.funded.seller':
+      if (viaChat) {
+        return {
+          subject: `Pul keldi — akkauntni topshiring — ${ctx.dealTitle}`,
+          heading: 'To\'lov qabul qilindi',
+          body:
+            `${deal} savdosi bo'yicha ${ctx.amount} platformaga tushdi va saqlanmoqda.\n\n` +
+            `Saytda xaridor bilan CHAT ochildi. Akkaunt ma'lumotlarini o'sha yerda ` +
+            `yuboring — yozishmalar shifrlangan va nizo chiqsa dalil bo'ladi.\n\n` +
+            `Pul xaridor "Akkaunt nomimga o'tdi" tugmasini bosgach hisobingizga o'tadi. ` +
+            `Xaridor ${autoReleaseDays} kun ichida javob bermasa — pul avtomatik sizga o'tadi.`,
+          action: 'Chatni ochish',
+        };
+      }
+      if (viaContent) {
+        return {
+          subject: `Pul keldi — mahsulotni topshiring — ${ctx.dealTitle}`,
+          heading: 'To\'lov qabul qilindi',
+          body:
+            `${deal} savdosi bo'yicha ${ctx.amount} platformaga tushdi va saqlanmoqda.\n\n` +
+            `Endi saytga kirib mahsulotni topshiring: havola, matn yoki fayl. ` +
+            `U shifrlangan holda saqlanadi va faqat xaridor ko'radi.\n\n` +
+            `Xaridor tekshirib tasdiqlagach pul hisobingizga o'tadi.`,
+          action: 'Mahsulotni topshirish',
+        };
+      }
       return {
         subject: `Pul keldi — tovarni yuboring — ${ctx.dealTitle}`,
         heading: 'To\'lov qabul qilindi',
@@ -98,11 +136,51 @@ export function renderEmail(template: EmailTemplate, ctx: EmailContext): EmailCo
         heading: 'To\'lov qabul qilindi',
         body:
           `${ctx.amount} platformada saqlanmoqda. Sotuvchi unga hali tegolmaydi.\n\n` +
-          `Endi sotuvchi tovarni yuboradi. U trek-raqam kiritgach sizga xabar beramiz.`,
+          (viaChat
+            ? `Sotuvchi bilan CHAT ochildi — akkauntni o'sha yerda o'tkazasiz.`
+            : viaContent
+              ? `Endi sotuvchi mahsulotni topshiradi. U topshirgach sizga xabar beramiz.`
+              : `Endi sotuvchi tovarni yuboradi. U trek-raqam kiritgach sizga xabar beramiz.`),
         action: 'Savdoni ko\'rish',
       };
 
     case 'deal.shipped':
+      if (viaChat) {
+        return {
+          subject: `Akkaunt topshirildi — ${ctx.dealTitle}`,
+          heading: 'Sotuvchi akkauntni topshirdi',
+          body:
+            `${deal} bo'yicha sotuvchi akkauntni topshirdi. Chatni oching va ` +
+            `ma'lumotlarni ko'ring.\n\n` +
+            `DARHOL shularni qiling:\n` +
+            `  1. Akkauntga kiring va hamma narsa joyidaligini tekshiring\n` +
+            `  2. Parolni o'zingiznikiga almashtiring\n` +
+            `  3. Bog'langan pochta va telefonni o'zingiznikiga almashtiring\n` +
+            `  4. Ikki bosqichli himoyani yoqing\n\n` +
+            `Shundan keyingina "Akkaunt nomimga o'tdi" tugmasini bosing — ` +
+            `bosgach pul sotuvchiga o'tadi.\n\n` +
+            `Muammo bo'lsa nizo oching: pul muzlatilgan holda qoladi. ` +
+            `${autoReleaseDays} kun ichida javob bermasangiz pul avtomatik sotuvchiga o'tadi.`,
+          action: 'Chatni ochish',
+        };
+      }
+      if (viaContent) {
+        return {
+          subject: `⏰ Mahsulot tayyor — 1 SOAT ichida tekshiring — ${ctx.dealTitle}`,
+          heading: 'Mahsulot topshirildi',
+          body:
+            `${deal} bo'yicha mahsulot tayyor. Saytga kirib oching.\n\n` +
+            `⏰ DIQQAT: sizda tekshirish uchun ${rule.autoReleaseHours} SOAT bor.\n` +
+            `Shu vaqt ichida javob bermasangiz pul AVTOMATIK sotuvchiga o'tadi.\n\n` +
+            `Hoziroq oching va tekshiring:\n` +
+            `  • havola ochiladimi\n` +
+            `  • fayl to'liq yuklanadimi\n` +
+            `  • ichidagi narsa savdoda yozilganidek mi\n\n` +
+            `Hammasi joyida bo'lsa "Mahsulotni tekshirdim" tugmasini bosing.\n` +
+            `Muammo bo'lsa DARHOL nizo oching — pul muzlatilgan holda qoladi.`,
+          action: 'Mahsulotni ochish',
+        };
+      }
       return {
         subject: `Tovar yuborildi — ${ctx.dealTitle}`,
         heading: 'Sotuvchi tovarni yubordi',
@@ -123,8 +201,10 @@ export function renderEmail(template: EmailTemplate, ctx: EmailContext): EmailCo
         subject: `Pul hisobingizga o'tdi — ${ctx.dealTitle}`,
         heading: 'Savdo muvaffaqiyatli yakunlandi',
         body:
-          `Xaridor tovarni olganini tasdiqladi. ${ctx.amount} hisobingizga o'tkazildi.\n\n` +
-          `Uni hamyon bo'limidan yechib olishingiz mumkin.`,
+          `Xaridor tasdiqladi. ${ctx.amount} hisobingizga o'tkazildi.\n\n` +
+          `⏳ Pul ${WALLET_HOLD_HOURS} soat MUZLATILGAN holda turadi — bu xavfsizlik ` +
+          `muddati. Muddat tugagach avtomatik ravishda yechib olish mumkin bo'ladi.\n\n` +
+          `Qolgan vaqtni hamyon bo'limida ko'rasiz.`,
         action: 'Hamyonni ochish',
       };
 
@@ -143,9 +223,9 @@ export function renderEmail(template: EmailTemplate, ctx: EmailContext): EmailCo
         subject: `Savdo avtomatik yakunlandi — ${ctx.dealTitle}`,
         heading: 'Savdo avtomatik yakunlandi',
         body:
-          `${deal} bo'yicha 7 kun ichida tasdiqlash ham, nizo ham bo'lmadi. ` +
-          `Shartlarga muvofiq pul sotuvchiga o'tkazildi.\n\n` +
-          `Agar tovarda muammo bo'lsa — biz bilan bog'laning.`,
+          `${deal} bo'yicha ${autoReleaseDays} kun ichida tasdiqlash ham, nizo ham ` +
+          `bo'lmadi. Shartlarga muvofiq pul sotuvchiga o'tkazildi.\n\n` +
+          `Agar muammo bo'lsa — biz bilan bog'laning.`,
         action: null,
       };
 
@@ -217,31 +297,59 @@ export function renderEmail(template: EmailTemplate, ctx: EmailContext): EmailCo
         action: null,
       };
 
-    case 'reminder.ship':
+    case 'reminder.ship': {
+      const what = viaChat ? 'akkauntni' : viaContent ? 'mahsulotni' : 'tovarni';
+      const hours = rule.handoverReminderHours;
+      const waited = hours >= 24 ? `${Math.round(hours / 24)} kundan` : `${hours} soatdan`;
+
+      if (digital) {
+        return {
+          subject: `Eslatma: ${what} topshirish kerak — ${ctx.dealTitle}`,
+          heading: `Topshirishni unutmang`,
+          body:
+            `${deal} savdosi bo'yicha pul ${waited} beri platformada kutmoqda, ` +
+            `lekin ${what} hali topshirilmagan.\n\n` +
+            (viaChat
+              ? `Chatni oching va akkaunt ma'lumotlarini yuboring.`
+              : `Saytga kirib havola, matn yoki faylni yuklang.`) +
+            `\n\nTopshira olmayotgan bo'lsangiz — savdoni bekor qiling, ` +
+            `pul xaridorga qaytadi.`,
+          action: viaChat ? 'Chatni ochish' : 'Mahsulotni topshirish',
+        };
+      }
       return {
         subject: `Eslatma: tovarni yuborish kerak — ${ctx.dealTitle}`,
         heading: 'Tovarni yuborishni unutmang',
         body:
-          `${deal} savdosi bo'yicha pul 3 kundan beri platformada kutmoqda, ` +
+          `${deal} savdosi bo'yicha pul ${waited} beri platformada kutmoqda, ` +
           `lekin trek-raqam hali kiritilmagan.\n\n` +
           `Tovarni yuborgan bo'lsangiz — saytga kirib trek-raqamni kiriting. ` +
           `Yubora olmayotgan bo'lsangiz — savdoni bekor qiling, pul xaridorga qaytadi.`,
         action: 'Trek-raqam kiritish',
       };
+    }
 
-    case 'reminder.confirm':
+    case 'reminder.confirm': {
+      const days = ctx.daysLeft ?? Math.max(1, autoReleaseDays);
+      const what = viaChat ? 'Akkauntni' : viaContent ? 'Mahsulotni' : 'Tovarni';
+
       return {
-        subject: `${ctx.daysLeft ?? 3} kundan keyin pul avtomatik o'tadi — ${ctx.dealTitle}`,
-        heading: 'Tovarni tasdiqlashni unutmang',
+        subject: `${days} kundan keyin pul avtomatik o'tadi — ${ctx.dealTitle}`,
+        heading: `${what} tasdiqlashni unutmang`,
         body:
-          `${deal} savdosi bo'yicha tovar yuborilgan edi.\n\n` +
-          `Agar ${ctx.daysLeft ?? 3} kun ichida javob bermasangiz, pul avtomatik ` +
+          `${deal} savdosi bo'yicha sotuvchi o'z qismini bajargan edi.\n\n` +
+          `Agar ${days} kun ichida javob bermasangiz, pul avtomatik ` +
           `sotuvchiga o'tkaziladi.\n\n` +
-          `Tovar yetib kelgan va hammasi joyida bo'lsa — tasdiqlang. ` +
-          `Yetib kelmagan yoki muammo bo'lsa — darhol nizo oching, ` +
-          `shunda pul muzlatilgan holda qoladi.`,
+          (viaChat
+            ? `Akkauntga kirgan, parol va pochtani o'zingiznikiga almashtirgan ` +
+              `bo'lsangiz — tasdiqlang.`
+            : viaContent
+              ? `Mahsulotni ochib ko'rgan va hammasi joyida bo'lsa — tasdiqlang.`
+              : `Tovar yetib kelgan va hammasi joyida bo'lsa — tasdiqlang.`) +
+          `\n\nMuammo bo'lsa — darhol nizo oching, shunda pul muzlatilgan holda qoladi.`,
         action: 'Savdoni ochish',
       };
+    }
 
     case 'reminder.dispute.admin':
       return {

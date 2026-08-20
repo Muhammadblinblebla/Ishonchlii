@@ -36,12 +36,32 @@ const schema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('30d'),
 
+  /**
+   * O'yin akkauntlarining login/paroli shu kalit bilan shifrlanadi.
+   *
+   * ⚠️ O'ZGARTIRMANG: kalit almashsa, ALLAQACHON topshirilgan akkaunt
+   * ma'lumotlarini ochib bo'lmaydi va xaridorlar o'zi sotib olgan
+   * akkauntdan mahrum bo'ladi. JWT sirlaridan FARQLI o'laroq buni
+   * muntazam aylantirib turish MUMKIN EMAS.
+   */
+  CREDENTIALS_SECRET: z.string().min(32, 'CREDENTIALS_SECRET kamida 32 belgi bo\'lishi kerak'),
+
   // §11: `*` qabul qilinmaydi
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 
   REDIS_URL: z.string().default(''),
 
-  PAYMENT_PROVIDER: z.enum(['mock', 'checkout_uz']).default('mock'),
+  PAYMENT_PROVIDER: z.enum(['mock', 'checkout_uz', 'click']).default('mock'),
+
+  // ─── Click (SHOP API) ─────────────────────────────────────────────────────
+  // Qiymatlar merchant.click.uz kabinetidan olinadi. To'rttasi ham majburiy.
+  // CLICK_SECRET_KEY — callback imzosini tekshiradi: usiz istalgan odam
+  // "to'lov keldi" deb yuborishi mumkin bo'lardi.
+  CLICK_SERVICE_ID: z.string().default(''),
+  CLICK_MERCHANT_ID: z.string().default(''),
+  CLICK_SECRET_KEY: z.string().default(''),
+  /** Merchant API (to'lov holatini so'rash) uchun foydalanuvchi ID. */
+  CLICK_MERCHANT_USER_ID: z.string().default(''),
 
   // checkout.uz autentifikatsiyasi: Authorization: Bearer <API_KEY>.
   // merchant_id kerak emas — so'rovlarda bunday maydon yo'q.
@@ -59,7 +79,7 @@ const schema = z.object({
   // `log`  — konsolga chiqaradi (standart). Hech qanday sozlama kerak emas.
   // `smtp` — haqiqiy yuborish. Har qanday SMTP xizmati bilan ishlaydi.
   EMAIL_DRIVER: z.enum(['log', 'smtp']).default('log'),
-  EMAIL_FROM: z.string().default('Escrow.uz <noreply@escrow.uz>'),
+  EMAIL_FROM: z.string().default('ishonchli.uz <noreply@ishonchli.uz>'),
   SMTP_HOST: z.string().default(''),
   SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
   SMTP_USER: z.string().default(''),
@@ -85,6 +105,20 @@ const raw = parsed.data;
 // Ikkala sir bir xil bo'lsa, access tokenni refresh sifatida ishlatib bo'ladi.
 if (raw.JWT_SECRET === raw.JWT_REFRESH_SECRET) {
   console.error('\n  ❌ JWT_SECRET va JWT_REFRESH_SECRET bir xil bo\'lishi mumkin emas.\n');
+  process.exit(1);
+}
+
+// Shifrlash kaliti JWT siri bilan bir xil bo'lsa: JWT sirini almashtirish
+// (bu odatiy xavfsizlik amali) barcha akkaunt ma'lumotlarini o'qib
+// bo'lmaydigan qilib qo'yardi.
+if (
+  raw.CREDENTIALS_SECRET === raw.JWT_SECRET ||
+  raw.CREDENTIALS_SECRET === raw.JWT_REFRESH_SECRET
+) {
+  console.error(
+    '\n  ❌ CREDENTIALS_SECRET JWT sirlaridan farq qilishi kerak.\n' +
+      '     Aks holda JWT sirini almashtirish sotilgan akkauntlarni yo\'qotadi.\n',
+  );
   process.exit(1);
 }
 
@@ -136,6 +170,37 @@ if (raw.PAYMENT_PROVIDER === 'checkout_uz') {
     console.warn(
       '\n  ⚠️  DIQQAT: checkout.uz yoqilgan, lekin NODE_ENV production emas.\n' +
         '     Yaratilgan har bir to\'lov HAQIQIY pul talab qiladi.\n' +
+        '     Sinash uchun eng kichik summani (1 000 so\'m) ishlating.\n',
+    );
+  }
+}
+
+// Click tanlangan bo'lsa barcha kalitlar to'ldirilgan bo'lishi shart.
+// Yarim sozlangan holat eng xavflisi: server ko'tariladi, savdolar yaratiladi,
+// to'lov paytida hammasi buziladi.
+if (raw.PAYMENT_PROVIDER === 'click') {
+  const missing = (
+    [
+      ['CLICK_SERVICE_ID', raw.CLICK_SERVICE_ID],
+      ['CLICK_MERCHANT_ID', raw.CLICK_MERCHANT_ID],
+      ['CLICK_SECRET_KEY', raw.CLICK_SECRET_KEY],
+      ['CLICK_MERCHANT_USER_ID', raw.CLICK_MERCHANT_USER_ID],
+    ] as const
+  )
+    .filter(([, value]) => value.trim() === '')
+    .map(([name]) => name);
+
+  if (missing.length > 0) {
+    console.error('\n  ❌ PAYMENT_PROVIDER="click", lekin sozlamalar to\'liq emas:\n');
+    for (const name of missing) console.error(`     ${name}`);
+    console.error('\n  Qiymatlar merchant.click.uz kabinetida. To\'ldiring yoki PAYMENT_PROVIDER="mock" qiling.\n');
+    process.exit(1);
+  }
+
+  if (!isProd) {
+    console.warn(
+      '\n  ⚠️  DIQQAT: Click yoqilgan, lekin NODE_ENV production emas.\n' +
+        '     Click\'da sandbox YO\'Q — har bir to\'lov HAQIQIY pul.\n' +
         '     Sinash uchun eng kichik summani (1 000 so\'m) ishlating.\n',
     );
   }

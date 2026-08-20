@@ -7,11 +7,12 @@
  */
 
 import type { DealStatus } from '../deal-status.js';
+import { type DealType, dealTypeRule, usesChat, usesContent } from '../deal-types.js';
 
 export const uz = {
   common: {
-    appName: 'Escrow.uz',
-    tagline: 'Xavfsiz savdo — pul faqat tovar yetib borgach o\'tadi',
+    appName: 'ishonchli.uz',
+    tagline: 'Xavfsiz savdo — pul faqat siz tasdiqlaganingizdan keyin o\'tadi',
     loading: 'Yuklanmoqda…',
     save: 'Saqlash',
     cancel: 'Bekor qilish',
@@ -131,13 +132,102 @@ export const uz = {
     tabDisputed: 'Nizoli',
     noDeals: 'Hozircha savdolaringiz yo\'q',
     noDealsHint: 'Birinchi savdoni yarating va xavfsiz savdo qilishni boshlang',
+
+    dealType: 'Nima sotilyapti?',
+
+    // Kalit so'z — savdoni topish usuli
+    keyword: 'Kalit so\'z',
+    keywordHint:
+      'Xaridor shu so\'zni saytga kiritib savdongizni topadi. Uni xaridorga ' +
+      'yuboring — Telegram, Instagram yoki og\'zaki ayting.',
+    keywordWhy: 'Kalit so\'z nima uchun kerak?',
+    keywordWhyText:
+      'Xaridorning emailini bilishingiz shart emas. Siz kalit so\'z o\'ylab topasiz ' +
+      '(masalan "pubg-hisob-7"), uni xaridorga aytasiz, u esa saytga kiritib ' +
+      'savdoni ochadi va to\'laydi. Boshqa hech qanday ma\'lumot almashish kerak emas.',
+    keywordPlaceholder: 'sotaman2026',
+    keywordTaken: 'Bu kalit so\'z band. Boshqasini tanlang.',
+    keywordShare: 'Xaridorga shu kalit so\'zni yuboring',
+
+    // Xaridor tomoni — savdoni topish
+    findTitle: 'Savdoni topish',
+    findHint: 'Sotuvchi bergan kalit so\'zni kiriting',
+    findButton: 'Topish',
+    findNotFound: 'Bunday kalit so\'z bilan ochiq savdo topilmadi. Sotuvchidan qayta so\'rang.',
+    findOwn: 'Bu sizning o\'z savdongiz — o\'zingizdan sotib ololmaysiz.',
+    claimButton: 'Savdoni ochish va to\'lash',
+  },
+
+  // ─── Raqamli mahsulot ─────────────────────────────────────────────────────
+  digital: {
+    kind: 'Nima topshirasiz?',
+    kindLink: 'Havola',
+    kindText: 'Matn',
+    kindFile: 'Fayl',
+
+    link: 'Havola',
+    linkPlaceholder: 'https://drive.google.com/...',
+    linkHint: 'Havola ochiq bo\'lishi va savdo tugagunicha ishlashi kerak',
+    text: 'Matn',
+    textPlaceholder: 'Kod, parol, ko\'rsatma — xaridorga yetkaziladigan matn',
+    file: 'Fayl',
+    fileHint:
+      'Fayl yuklash hali ishlamaydi — tez orada qo\'shiladi. Hozircha faylni Google Drive yoki Telegram\'ga joylab, HAVOLA sifatida yuboring.',
+    fileChoose: 'Fayl tanlash',
+    fileUploading: 'Yuklanmoqda…',
+
+    handoverTitle: 'Mahsulotni topshirish',
+    handoverHint:
+      'Topshirilgandan keyin O\'ZGARTIRIB BO\'LMAYDI. Xaridor faqat shu narsani oladi.',
+    handoverButton: 'Topshirish',
+
+    // Xaridor tomoni
+    contentTitle: 'Mahsulot',
+    open: 'Ochish',
+    download: 'Yuklab olish',
+    downloadHint: 'Havola 1 soat amal qiladi',
+    urgent: 'Tekshirish uchun vaqt',
+    urgentText:
+      'Vaqt tugasa pul avtomatik sotuvchiga o\'tadi. Muammo bo\'lsa DARHOL nizo oching.',
+  },
+
+  // ─── Chat ─────────────────────────────────────────────────────────────────
+  chat: {
+    title: 'Chat',
+    hint: 'Akkaunt ma\'lumotlarini shu yerda yuboring. Yozishmalar shifrlangan.',
+    placeholder: 'Xabar yozing…',
+    send: 'Yuborish',
+    empty: 'Hozircha xabar yo\'q. Birinchi bo\'lib yozing.',
+    closed: 'Chat yopilgan — savdo yakunlangan.',
+    evidence: 'Nizo chiqsa bu yozishmalar arbitrga ko\'rsatiladi.',
+  },
+
+  // ─── eFootball akkaunt ────────────────────────────────────────────────────
+  game: {
+    game: 'O\'yin',
+    gameOther: 'O\'yin nomini yozing',
+
+    credentialsTitle: 'Akkaunt ma\'lumotlari',
+    checklistTitle: 'Tasdiqlashdan oldin shularni bajaring',
+    checklistWarning:
+      'Tasdiqlagandan keyin pul sotuvchiga o\'tadi va ortga qaytarib bo\'lmaydi. ' +
+      'Parol va pochtani almashtirmasangiz, sotuvchi akkauntni tiklab olishi mumkin.',
+    checklistConfirm: 'Yuqoridagilarning hammasini bajardim',
+
+    handoverTitle: 'Akkauntni topshirdim',
+    handoverHint:
+      'Chatda akkaunt ma\'lumotlarini yuborganingizdan keyin bosing. Xaridor ' +
+      'tekshirib tasdiqlaydi.',
   },
 
   wallet: {
     title: 'Hamyon',
     available: 'Yechib olish mumkin',
-    pending: 'Muzlatilgan',
-    pendingHint: 'Savdolar yakunlangach bu summa yechib olinadi',
+    pending: 'Savdoda',
+    pendingHint: 'Savdo hali yakunlanmagan — natija noma\'lum',
+    holding: 'Muzlatilgan',
+    holdingHint: 'Savdo yakunlandi. Xavfsizlik muddati tugagach yechib olasiz',
+    holdingReleaseIn: 'Ochilishiga qoldi',
     total: 'Jami',
     payout: 'Pul yechish',
     payoutAmount: 'Summa',
@@ -152,6 +242,20 @@ export const uz = {
     title: 'Nizolar',
     openDisputes: 'Ochiq nizolar',
     noDisputes: 'Hal qilinmagan nizolar yo\'q',
+
+    // Avtomatik hal qilish
+    autoTitle: 'Nizolar avtomatik hal qilinadi',
+    autoText:
+      'Tizim 24 soat kutadi — shu vaqtda tomonlar o\'zi kelishishi mumkin. ' +
+      'Keyin faktlar asosida o\'zi qaror qabul qiladi. Bu yerda faqat ' +
+      'kuzatasiz; aralashish SHART EMAS.',
+    autoResolved: 'Tizim hal qildi',
+    autoUncertain: 'Taxminiy qaror',
+    autoUncertainHint:
+      'Tizim mahsulot ichini tekshira olmadi — summa teng bo\'lindi',
+    manualOverride: 'Qo\'lda o\'zgartirish',
+    manualOverrideHint:
+      'Faqat tizim qarori aniq noto\'g\'ri bo\'lganda ishlating.',
     resolveTitle: 'Nizoni hal qilish',
     resolveBuyer: 'Xaridor foydasiga',
     resolveSeller: 'Sotuvchi foydasiga',
@@ -192,19 +296,25 @@ export const statusLabels: Record<DealStatus, string> = {
 export function whatHappensNow(
   status: DealStatus,
   role: 'buyer' | 'seller' | 'admin',
+  dealType: DealType | string = 'PHYSICAL',
 ): { title: string; text: string } {
   const isBuyer = role === 'buyer';
+  const viaChat = usesChat(dealType);       // eFootball akkaunt
+  const viaContent = usesContent(dealType); // PDF/video/havola/matn
+  const rule = dealTypeRule(dealType);
 
   switch (status) {
     case 'DRAFT':
       return isBuyer
         ? {
             title: 'Shartlarni ko\'rib chiqing',
-            text: 'Tovar, narx va shartlar sizga to\'g\'ri kelsa — qabul qiling. Shundan keyin to\'lov qilasiz.',
+            text: 'Narx va shartlar sizga to\'g\'ri kelsa — qabul qiling. Shundan keyin to\'lov qilasiz.',
           }
         : {
-            title: 'Xaridor javobini kutmoqdamiz',
-            text: 'Xaridor shartlarni qabul qilishi kerak. Havolani unga yuboring.',
+            title: 'Xaridor kutilmoqda',
+            text:
+              'Kalit so\'zni xaridorga yuboring — Telegram, Instagram yoki og\'zaki. ' +
+              'U kalit so\'zni saytga kiritib savdoni ochadi.',
           };
 
     case 'AWAITING_PAYMENT':
@@ -219,6 +329,34 @@ export function whatHappensNow(
           };
 
     case 'FUNDED':
+      if (viaChat) {
+        return isBuyer
+          ? {
+              title: 'Chat ochildi',
+              text:
+                'Sotuvchi bilan yozishing — akkauntni o\'sha yerda o\'tkazasiz. ' +
+                'Akkaunt qo\'lingizga o\'tgach "Akkaunt nomimga o\'tdi" tugmasini bosasiz.',
+            }
+          : {
+              title: 'Chat ochildi — akkauntni topshiring',
+              text:
+                'Pul platformada va sizga kafolatlangan. Chatda akkaunt ma\'lumotlarini ' +
+                'yuboring. Yozishmalar shifrlangan va nizo chiqsa dalil bo\'ladi.',
+            };
+      }
+      if (viaContent) {
+        return isBuyer
+          ? {
+              title: 'Pul xavfsiz saqlanmoqda',
+              text: 'Sotuvchi mahsulotni topshirishi kerak. U topshirgach sizga xabar beramiz.',
+            }
+          : {
+              title: 'Mahsulotni topshiring',
+              text:
+                'Pul platformada va sizga kafolatlangan. Havola, matn yoki faylni ' +
+                'yuklang — uni faqat xaridor ko\'radi.',
+            };
+      }
       return isBuyer
         ? {
             title: 'Pul xavfsiz saqlanmoqda',
@@ -230,6 +368,36 @@ export function whatHappensNow(
           };
 
     case 'SHIPPED':
+      if (viaChat) {
+        return isBuyer
+          ? {
+              title: 'Akkauntni tekshiring va o\'zingizga biriktiring',
+              text:
+                'Akkauntga kiring, parol va bog\'langan pochtani DARHOL o\'zingiznikiga ' +
+                'almashtiring. Shundan keyingina tasdiqlang. Muammo bo\'lsa nizo oching — ' +
+                'pul muzlatilgan holda qoladi.',
+            }
+          : {
+              title: 'Xaridor tasdiqini kutmoqdamiz',
+              text:
+                'Xaridor akkauntni tekshirmoqda. Tasdiqlagach pul sizga o\'tadi. ' +
+                'Bu vaqt ichida akkauntni tiklashga urinmang.',
+            };
+      }
+      if (viaContent) {
+        return isBuyer
+          ? {
+              title: `Mahsulotni HOZIR tekshiring — ${rule.autoReleaseHours} soat vaqtingiz bor`,
+              text:
+                'Havolani oching yoki faylni yuklab oling va ichini tekshiring. ' +
+                'Hammasi joyida bo\'lsa tasdiqlang. Muammo bo\'lsa DARHOL nizo oching — ' +
+                'vaqt tugasa pul avtomatik sotuvchiga o\'tib ketadi.',
+            }
+          : {
+              title: 'Xaridor tekshirmoqda',
+              text: `Xaridorda ${rule.autoReleaseHours} soat bor. Tasdiqlasa yoki vaqt tugasa pul sizga o\'tadi.`,
+            };
+      }
       return isBuyer
         ? {
             title: 'Tovarni kuting va tasdiqlang',
@@ -274,6 +442,17 @@ export function whatHappensNow(
     case 'EXPIRED':
       return { title: 'Muddati o\'tdi', text: 'To\'lov belgilangan muddatda amalga oshirilmadi.' };
   }
+}
+
+/**
+ * Holat nomi savdo turiga moslangan holda.
+ *
+ * `SHIPPED` jismoniy tovarda "Yuborildi", o'yin akkauntida esa
+ * "Topshirildi" bo'lishi kerak — pochta yo'q, hech narsa yuborilmagan.
+ */
+export function statusLabelFor(status: DealStatus, dealType: DealType | string): string {
+  if (status === 'SHIPPED') return dealTypeRule(dealType).text.handoverStep;
+  return statusLabels[status];
 }
 
 /** `SHIPPED` holatidagi taymer matni (§10). */

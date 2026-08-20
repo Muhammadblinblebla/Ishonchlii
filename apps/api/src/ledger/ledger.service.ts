@@ -20,7 +20,9 @@ import {
   PLATFORM_ESCROW,
   PLATFORM_ESCROW_LIABILITY,
   PLATFORM_REVENUE,
+  PROVIDER_FEE_EXPENSE,
   userAvailable,
+  userHolding,
   userPending,
 } from '@escrowuz/shared';
 import { prisma } from '../db/prisma.js';
@@ -166,24 +168,59 @@ function isUniqueViolation(err: unknown): boolean {
 /**
  * To'lov keldi → escrowga tushdi.
  *
- *   -X  external:<provayder>          tashqi dunyodan kirdi
- *   +X  platform:escrow               platforma aktivi
- *   +X  user:<sotuvchi>:pending       sotuvchining shartli da'vosi
- *   -X  platform:escrow_liability     majburiyat
+ * DIQQAT: xaridor kartasidan yechilgan summa bilan bizning balansimizga
+ * tushgan summa BIR XIL EMAS. To'lov tizimi o'z ulushini ushlab qoladi.
+ *
+ *   -C  external:<provayder>          xaridor kartasidan yechilgan
+ *   +F  expense:payment_provider      to'lov tizimi ushlab qolgani
+ *   +E  platform:escrow               bizning balansimizga tushgani
+ *   +E  user:<sotuvchi>:pending       sotuvchining shartli da'vosi
+ *   -E  platform:escrow_liability     majburiyat
+ *
+ *   C = E + F  →  yig'indi 0 ✓
+ *
+ * `expense:payment_provider` hisobi bo'lmasa escrowda bo'lmagan pul
+ * bordek ko'rinardi va savdo yakunlanganda to'lashga mablag' yetmasdi.
  */
-export function depositLegs(sellerId: string, amountTiyin: bigint, provider: string): LedgerLeg[] {
-  return [
-    { accountId: `external:${provider}`, amount: -amountTiyin, entryType: 'deposit' },
-    { accountId: PLATFORM_ESCROW, amount: amountTiyin, entryType: 'deposit' },
-    { accountId: userPending(sellerId), amount: amountTiyin, entryType: 'deposit' },
-    { accountId: PLATFORM_ESCROW_LIABILITY, amount: -amountTiyin, entryType: 'deposit' },
+export function depositLegs(
+  sellerId: string,
+  escrowTiyin: bigint,
+  providerFeeTiyin: bigint,
+  provider: string,
+): LedgerLeg[] {
+  const charged = escrowTiyin + providerFeeTiyin;
+
+  const legs: LedgerLeg[] = [
+    { accountId: `external:${provider}`, amount: -charged, entryType: 'deposit' },
+    { accountId: PLATFORM_ESCROW, amount: escrowTiyin, entryType: 'deposit' },
+    { accountId: userPending(sellerId), amount: escrowTiyin, entryType: 'deposit' },
+    { accountId: PLATFORM_ESCROW_LIABILITY, amount: -escrowTiyin, entryType: 'deposit' },
   ];
+
+  if (providerFeeTiyin > 0n) {
+    legs.push({
+      accountId: PROVIDER_FEE_EXPENSE,
+      amount: providerFeeTiyin,
+      entryType: 'commission',
+      description: `${provider} to'lov komissiyasi`,
+    });
+  }
+
+  return legs;
 }
 
 /**
  * Savdo yakunlandi → pul sotuvchiga, komissiya platformaga.
  *
- * `escrowTiyin` — escrowda turgan summa (xaridor tushirgani).
+ * ⚠️ Pul `available` ga EMAS, `holding` ga tushadi.
+ *
+ * Sabab: savdo yakunlangach ham pul 30 soat ushlab turiladi
+ * (`WALLET_HOLD_HOURS`). Muddat tugagach fon vazifasi `releaseHoldLegs`
+ * bilan uni `available` ga ko'chiradi va shundan keyingina yechib olinadi.
+ *
+ * Nega kerak: to'lov tizimi to'lovni qaytarib olishi mumkin, va firibgar
+ * soxta savdo qilib pulni darhol yechib ketolmasligi kerak.
+ *
  * `sellerTiyin` + `commissionTiyin` = `escrowTiyin` bo'lishi shart.
  */
 export function releaseLegs(
@@ -207,13 +244,40 @@ export function releaseLegs(
   ];
 
   if (sellerTiyin > 0n) {
-    legs.push({ accountId: userAvailable(sellerId), amount: sellerTiyin, entryType: 'release' });
+    legs.push({ accountId: userHolding(sellerId), amount: sellerTiyin, entryType: 'release' });
   }
   if (commissionTiyin > 0n) {
+    // Komissiya darhol platformaga — u chargeback xavfiga tushmaydi,
+    // chunki qaytarish bo'lsa komissiya ham qaytariladi (siyosat bo'yicha).
     legs.push({ accountId: PLATFORM_REVENUE, amount: commissionTiyin, entryType: 'commission' });
   }
 
   return legs;
+}
+
+/**
+ * 30 soatlik muddat tugadi → pul `holding` dan `available` ga.
+ *
+ * Bu ODDIY ko'chirish: umumiy pul miqdori o'zgarmaydi, faqat qaysi
+ * hisobda turgani o'zgaradi. Shuning uchun ikki oyoq yetarli va
+ * yig'indi 0 bo'ladi.
+ *
+ * Fon vazifasi (`release-holds`) chaqiradi.
+ */
+export function releaseHoldLegs(userId: string, amountTiyin: bigint): LedgerLeg[] {
+  if (amountTiyin <= 0n) {
+    throw new LedgerError(`Muzlatilgan summa musbat bo'lishi kerak, kelgan: ${amountTiyin}`);
+  }
+
+  return [
+    { accountId: userHolding(userId), amount: -amountTiyin, entryType: 'release' },
+    {
+      accountId: userAvailable(userId),
+      amount: amountTiyin,
+      entryType: 'release',
+      description: 'Ushlab turish muddati tugadi',
+    },
+  ];
 }
 
 /**
@@ -284,8 +348,13 @@ export function payoutReversalLegs(
 export interface WalletBalance {
   /** Yechib olish mumkin bo'lgan summa. */
   readonly availableTiyin: bigint;
-  /** Muzlatilgan — savdo yakunlanmagan. */
+  /** Savdo hali yakunlanmagan — natija noma'lum. */
   readonly pendingTiyin: bigint;
+  /**
+   * Savdo yakunlangan, pul sotuvchiniki — lekin 30 soatlik ushlab turish
+   * muddati tugamagan. Muddat tugagach `available` ga o'tadi.
+   */
+  readonly holdingTiyin: bigint;
 }
 
 /**
@@ -301,7 +370,11 @@ export async function getBalance(
 ): Promise<WalletBalance> {
   const rows = await tx.ledgerEntry.groupBy({
     by: ['accountId'],
-    where: { accountId: { in: [userAvailable(userId), userPending(userId)] } },
+    where: {
+      accountId: {
+        in: [userAvailable(userId), userPending(userId), userHolding(userId)],
+      },
+    },
     _sum: { amount: true },
   });
 
@@ -311,6 +384,7 @@ export async function getBalance(
   return {
     availableTiyin: find(userAvailable(userId)),
     pendingTiyin: find(userPending(userId)),
+    holdingTiyin: find(userHolding(userId)),
   };
 }
 

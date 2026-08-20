@@ -1,6 +1,15 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { COMMISSION_POLICY, DEAL_STATUSES, parseTiyin } from '@escrowuz/shared';
+import {
+  COMMISSION_POLICY,
+  CONTENT_KINDS,
+  DEAL_STATUSES,
+  DEAL_TYPES,
+  KEYWORD_RULES,
+  parseTiyin,
+  usesChat,
+  usesContent,
+} from '@escrowuz/shared';
 import { prisma, serializeBigInt } from '../db/prisma.js';
 import { ApiError } from '../lib/errors.js';
 import { idempotencyGuard } from '../plugins/idempotency.plugin.js';
@@ -34,8 +43,35 @@ const createDealSchema = z.object({
   description: z.string().trim().max(5000).default(''),
   amountTiyin: amountSchema,
   commissionPayer: z.enum(['buyer', 'seller', 'split']).default(COMMISSION_POLICY.defaultPayer),
-  counterpartyEmail: z.string().trim().toLowerCase().email('Email noto\'g\'ri'),
-  myRole: z.enum(['buyer', 'seller']),
+  // Ko'rsatilmasa jismoniy tovar — eski mijozlar ham ishlashda davom etadi.
+  dealType: z.enum(DEAL_TYPES).default('PHYSICAL'),
+  /**
+   * KALIT SO'Z — xaridor savdoni shu orqali topadi.
+   * Sotuvchi o'ylab topadi, xaridorning emaili so'ralmaydi.
+   */
+  keyword: z
+    .string()
+    .trim()
+    .min(KEYWORD_RULES.minLength)
+    .max(KEYWORD_RULES.maxLength)
+    .regex(KEYWORD_RULES.pattern, KEYWORD_RULES.patternHint),
+});
+
+const keywordSchema = z.object({
+  keyword: z
+    .string()
+    .trim()
+    .min(KEYWORD_RULES.minLength)
+    .max(KEYWORD_RULES.maxLength),
+});
+
+/** Raqamli mahsulot: havola, matn yoki fayl kaliti. */
+const contentSchema = z.object({
+  kind: z.enum(CONTENT_KINDS),
+  value: z.string().trim().min(1, 'Qiymat bo\'sh bo\'lishi mumkin emas').max(5000),
+  fileName: z.string().trim().max(300).optional(),
+  fileSize: z.coerce.number().int().positive().optional(),
+  fileMime: z.string().trim().max(120).optional(),
 });
 
 const shipSchema = z.object({
@@ -135,20 +171,30 @@ export const dealRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Holat o'zgartiruvchi amallar ──────────────────────────────────────────
 
-  app.post('/deals/:id/accept', mutating, async (req, reply) => {
+  /**
+   * KALIT SO'Z bo'yicha ochiq savdoni topish.
+   *
+   * Hech narsa band qilinmaydi — xaridor faqat nima sotib olayotganini
+   * va qancha to'lashini ko'radi.
+   */
+  app.post('/deals/find', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const { keyword } = parse(keywordSchema, req.body);
+      const found = await deals.findByKeyword(keyword, req.user!.id);
+      return reply.send(serializeBigInt(found));
+    },
+  );
+
+  /**
+   * Xaridor savdoni BAND QILADI va to'lovga o'tadi.
+   *
+   * Poyga holati bazada atomik `updateMany` bilan to'siladi — ikki xaridor
+   * bir vaqtda bosса faqat bittasi o'tadi.
+   */
+  app.post('/deals/:id/claim', mutating, async (req, reply) => {
     const { id } = parse(z.object({ id: z.string().uuid() }), req.params);
-    const { role } = await deals.getDealForUser(id, req.user!.id, false);
-
-    if (role !== 'buyer') {
-      throw ApiError.forbidden('Shartlarni faqat xaridor qabul qiladi');
-    }
-
-    const result = await executeTransition(id, 'accept', {
-      ...ctxOf(req),
-      actorId: req.user!.id,
-      actor: 'buyer',
-    });
-    return reply.send(serializeBigInt({ deal: result.deal }));
+    const deal = await deals.claimDeal(id, req.user!.id);
+    return reply.send(serializeBigInt({ deal }));
   });
 
   app.post('/deals/:id/pay', { ...mutating, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -160,11 +206,50 @@ export const dealRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  /**
+   * Sotuvchi tovarni topshiradi.
+   *
+   * Tananing shakli SAVDO TURIGA qarab tanlanadi — mijoz o'zi tanlamaydi.
+   * Aks holda raqamli savdoga trek-raqam yuborib, xaridorni mahsulotsiz
+   * qoldirib ketish mumkin bo'lardi.
+   */
   app.post('/deals/:id/ship', mutating, async (req, reply) => {
     const { id } = parse(z.object({ id: z.string().uuid() }), req.params);
+    const { deal: current } = await deals.getDealForUser(id, req.user!.id, false);
+
+    // eFootball: chat orqali topshiriladi, hech narsa saqlanmaydi
+    if (usesChat(current.dealType)) {
+      const deal = await deals.markHandedOver(id, req.user!.id, ctxOf(req));
+      return reply.send(serializeBigInt({ deal }));
+    }
+
+    // Raqamli mahsulot: havola, matn yoki fayl
+    if (usesContent(current.dealType)) {
+      const data = parse(contentSchema, req.body);
+      const deal = await deals.handoverContent(id, req.user!.id, data, ctxOf(req));
+      return reply.send(serializeBigInt({ deal }));
+    }
+
+    // Jismoniy tovar: trek-raqam
     const data = parse(shipSchema, req.body);
     const deal = await deals.shipDeal(id, req.user!.id, data, ctxOf(req));
     return reply.send(serializeBigInt({ deal }));
+  });
+
+  /**
+   * Raqamli mahsulot — FAQAT xaridorga, faqat topshirilgandan keyin.
+   *
+   * Alohida endpoint: savdo sahifasi (`GET /deals/:id`) sotuvchi va nizoda
+   * admin uchun ham ochiq, mahsulot esa faqat xaridorga tegishli.
+   */
+  app.get('/deals/:id/content', async (req, reply) => {
+    const { id } = parse(z.object({ id: z.string().uuid() }), req.params);
+    const result = await deals.readContent(id, req.user!.id);
+
+    return reply
+      .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+      .header('Pragma', 'no-cache')
+      .send(serializeBigInt(result));
   });
 
   /**
@@ -173,13 +258,16 @@ export const dealRoutes: FastifyPluginAsync = async (app) => {
    * Bu tizimning eng nozik endpointi: shu yerdan keyin pulni qaytarib
    * bo'lmaydi. Ikki marta bosilsa ham bir marta o'tadi — `executeTransition`
    * ichidagi qulf va ledger idempotentligi buni ta'minlaydi.
+   *
+   * Tasdiqlangach pul sotuvchining `holding` hisobiga tushadi va 30 soat
+   * muzlatib turiladi (`WALLET_HOLD_HOURS`).
    */
   app.post('/deals/:id/confirm', mutating, async (req, reply) => {
     const { id } = parse(z.object({ id: z.string().uuid() }), req.params);
     const { role } = await deals.getDealForUser(id, req.user!.id, false);
 
     if (role !== 'buyer') {
-      throw ApiError.forbidden('Tovarni faqat xaridor tasdiqlaydi');
+      throw ApiError.forbidden('Faqat xaridor tasdiqlaydi');
     }
 
     const result = await executeTransition(id, 'confirm', {

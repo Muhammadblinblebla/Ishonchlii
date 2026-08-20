@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { uz } from '@escrowuz/shared';
 import { useRequireAuth } from '@/components/AuthProvider';
-import { ErrorBox, Field, Spinner } from '@/components/ui';
+import { ErrorBox, Field, Spinner, useCountdown } from '@/components/ui';
 import { api, ApiRequestError, type Transaction, type Wallet } from '@/lib/api';
 import { formatAmount, formatDate, groupDigits, soumToTiyin } from '@/lib/format';
 
@@ -42,16 +42,30 @@ export default function WalletPage() {
       <ErrorBox message={error} />
 
       {/* ── Balans ───────────────────────────────────────────────────────── */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="card p-6">
+      {/*
+        Uchta alohida summa. Ularni birlashtirsak foydalanuvchi "pulim bor,
+        nega yecholmayapman?" degan savol bilan qolardi.
+      */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="card p-4 sm:p-5">
           <p className="text-sm text-slate-500">{uz.wallet.available}</p>
-          <p className="tabular mt-1 text-3xl font-semibold text-slate-900">
+          <p className="tabular mt-1 text-2xl font-semibold text-emerald-700">
             {formatAmount(wallet.availableTiyin)}
           </p>
         </div>
-        <div className="card p-6">
+
+        <div className="card p-4 sm:p-5">
+          <p className="text-sm text-slate-500">{uz.wallet.holding}</p>
+          <p className="tabular mt-1 text-2xl font-semibold text-amber-600">
+            {formatAmount(wallet.holdingTiyin)}
+          </p>
+          <p className="mt-2 text-xs text-slate-500">{uz.wallet.holdingHint}</p>
+          <HoldCountdown releaseAt={wallet.nextReleaseAt} />
+        </div>
+
+        <div className="card p-4 sm:p-5">
           <p className="text-sm text-slate-500">{uz.wallet.pending}</p>
-          <p className="tabular mt-1 text-3xl font-semibold text-slate-400">
+          <p className="tabular mt-1 text-2xl font-semibold text-slate-400">
             {formatAmount(wallet.pendingTiyin)}
           </p>
           <p className="mt-2 text-xs text-slate-500">{uz.wallet.pendingHint}</p>
@@ -63,12 +77,12 @@ export default function WalletPage() {
 
       {/* ── Tranzaksiyalar ───────────────────────────────────────────────── */}
       <section className="card overflow-hidden">
-        <h2 className="border-b border-slate-100 px-6 py-4 font-semibold text-slate-900">
+        <h2 className="border-b border-slate-100 px-4 py-4 font-semibold text-slate-900 sm:px-6">
           {uz.wallet.transactions}
         </h2>
 
         {transactions.length === 0 ? (
-          <p className="px-6 py-10 text-center text-sm text-slate-500">
+          <p className="px-4 py-10 text-center text-sm text-slate-500 sm:px-6">
             {uz.wallet.noTransactions}
           </p>
         ) : (
@@ -76,8 +90,9 @@ export default function WalletPage() {
             {transactions.map((tx) => {
               const amount = BigInt(tx.amount);
               const isPending = tx.accountId.endsWith(':pending');
+              const isHolding = tx.accountId.endsWith(':holding');
               return (
-                <li key={tx.id} className="flex items-center gap-4 px-6 py-4">
+                <li key={tx.id} className="flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-6">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-slate-900">
                       {tx.deal ? (
@@ -91,6 +106,7 @@ export default function WalletPage() {
                     <p className="mt-0.5 text-xs text-slate-500">
                       {formatDate(tx.createdAt)}
                       {isPending && ` · ${uz.wallet.pending.toLowerCase()}`}
+                      {isHolding && ` · ${uz.wallet.holding.toLowerCase()}`}
                     </p>
                   </div>
                   <span
@@ -108,6 +124,35 @@ export default function WalletPage() {
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Muzlatilgan pul qachon ochilishini ko'rsatadi.
+ *
+ * Aniq sana emas, QOLGAN VAQT ko'rsatiladi: "18 soat qoldi" ni tushunish
+ * "19-avgust 14:32 da ochiladi" dan osonroq.
+ */
+function HoldCountdown({ releaseAt }: { releaseAt: string | null }) {
+  const remaining = useCountdown(releaseAt);
+  if (!releaseAt) return null;
+
+  if (remaining <= 0) {
+    return (
+      <p className="mt-2 text-xs font-medium text-emerald-700">
+        Ochilmoqda — bir necha daqiqada hisobingizga o&apos;tadi
+      </p>
+    );
+  }
+
+  const hours = Math.floor(remaining / 3_600_000);
+  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
+
+  return (
+    <p className="mt-2 text-xs font-medium text-amber-700">
+      {uz.wallet.holdingReleaseIn}: {hours > 0 ? `${hours} soat ` : ''}
+      {minutes} daqiqa
+    </p>
   );
 }
 
@@ -144,7 +189,7 @@ function PayoutForm({
   if (available <= 0n) return null;
 
   return (
-    <section className="card p-6">
+    <section className="card p-4 sm:p-6">
       <h2 className="font-semibold text-slate-900">{uz.wallet.payout}</h2>
 
       <form
@@ -204,7 +249,7 @@ function PayoutForm({
 
         <button
           type="submit"
-          className="btn-primary"
+          className="btn-primary w-full sm:w-auto"
           disabled={busy || tooMuch || requested <= 0n}
         >
           {busy ? uz.common.loading : uz.wallet.payoutButton}
