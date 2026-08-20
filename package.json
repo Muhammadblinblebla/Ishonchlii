@@ -23,7 +23,8 @@
     "db:studio": "npm run db:studio --workspace=@escrowuz/api",
     "ledger:check": "npm run ledger:check --workspace=@escrowuz/api",
     "db:verify": "npm run db:verify --workspace=@escrowuz/api",
-    "gen:secrets": "bash scripts/gen-secrets.sh"
+    "gen:secrets": "bash scripts/gen-secrets.sh",
+    "verify:deploy": "bash scripts/verify-deploy.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

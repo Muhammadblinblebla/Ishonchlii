@@ -70,7 +70,17 @@ ko'chiraman. Haqiqiy foydalanuvchilar paydo bo'lgach bu ancha qiyinlashadi.
 
 Railway va Vercel GitHub'dan o'qiydi.
 
-Kod allaqachon commit qilingan. GitHub'da **yangi PRIVATE repository** yarating (`escrowuz`), so'ng:
+**Avval tekshiring** — Railway va Vercel qiladigan narsani aynan
+takrorlaydi (toza klon, `.env` yo'q, `dist` yo'q):
+
+```bash
+npm run verify:deploy
+```
+
+`✅ Deploy uchun tayyor` chiqishi kerak. Chiqmasa — xato aynan
+deploy'da ham chiqadi, oldin uni tuzating.
+
+GitHub'da **yangi PRIVATE repository** yarating (`escrowuz`), so'ng:
 
 ```bash
 git remote add origin https://github.com/<foydalanuvchi>/escrowuz.git
