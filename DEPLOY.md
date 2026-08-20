@@ -12,17 +12,65 @@ Ikkalasida ham bepul tarif yetarli. Kredit karta talab qilinmaydi.
 
 ---
 
+## Deploy'dan oldin: nima tayyor, nima yo'q
+
+| Narsa | Holat |
+|---|---|
+| Kalit so'z bilan savdo | ✅ ishlaydi |
+| eFootball akkaunt + chat | ✅ ishlaydi |
+| Raqamli mahsulot — **havola** va **matn** | ✅ ishlaydi |
+| Raqamli mahsulot — **fayl yuklash** | ❌ hali yo'q |
+| Nizolarni avtomatik hal qilish | ✅ ishlaydi |
+| Hamyonda 30 soatlik muzlatish | ✅ ishlaydi |
+| Click to'lovi | ⬜ kalitlar kerak |
+| Sotuvchiga pul chiqarish | ⚠️ qo'lda — pastga qarang |
+
+**Fayl yuklash** hali qo'shilmagan. Interfeysda "Fayl" tugmasi ko'rinadi,
+lekin bosilmaydi va yonida sabab yozilgan: hozircha faylni Google Drive
+yoki Telegram'ga joylab, **havola** sifatida yuborish kerak.
+
+**Pul chiqarish** — Click SHOP API pul o'tkazishni qo'llab-quvvatlamaydi.
+Ya'ni sotuvchi "yechish" bosganda so'rov admin panelidagi navbatga tushadi
+va **siz bankdan qo'lda o'tkazasiz**, keyin "bajarildi" deb belgilaysiz.
+
+Bu kod kamchiligi emas — provayderda bunday API yo'q. Click bilan
+shartnomangizga payout qo'shilsa, kod tayyor: `supportsPayout` ni `true`
+qilish va `payout()` metodini to'ldirish kifoya, savdo mantig'iga
+tegilmaydi.
+
+---
+
+## ⚠️ Baza Tokioda — ko'chirishni o'ylab ko'ring
+
+Hozirgi Supabase loyihasi `ap-northeast-1` (Tokio) da. O'lchadim:
+
+| | Vaqt |
+|---|---|
+| Oddiy `SELECT 1` | ~1 000 ms |
+| Umumiy internet (google.com) | ~137 ms |
+
+Bu haqiqiy foydalanuvchiga shunday tegadi:
+
+```
+/auth/login   2.15 s
+/deals        2.01 s
+/wallet       2.01 s
+```
+
+Har bosishda **2 soniya** kutish. Frankfurt (`eu-central-1`) da bu
+~200 ms bo'lardi — 8-10 barobar tez.
+
+Hozir baza deyarli bo'sh, ko'chirish oson: yangi Supabase loyihasi
+yarating, `DATABASE_URL` va `DIRECT_URL` ni bering — men migratsiyalarni
+ko'chiraman. Haqiqiy foydalanuvchilar paydo bo'lgach bu ancha qiyinlashadi.
+
+---
+
 ## 0. Avval: kodni GitHub'ga joylash
 
 Railway va Vercel GitHub'dan o'qiydi.
 
-```bash
-cd /Users/mac/Desktop/Escrowuz
-git add -A
-git commit -m "Escrow platformasi"
-```
-
-GitHub'da **yangi PRIVATE repository** yarating (`escrowuz`), so'ng:
+Kod allaqachon commit qilingan. GitHub'da **yangi PRIVATE repository** yarating (`escrowuz`), so'ng:
 
 ```bash
 git remote add origin https://github.com/<foydalanuvchi>/escrowuz.git
@@ -53,17 +101,20 @@ NODE_ENV=production
 DATABASE_URL=postgresql://postgres.tsomhnmqwgipaupnyxda:<PAROL>@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
 DIRECT_URL=postgresql://postgres.tsomhnmqwgipaupnyxda:<PAROL>@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres
 
-# YANGI sirlar yarating — dev'dagilarni ISHLATMANG:
-#   openssl rand -base64 48
+# YANGI sirlar yarating — dev'dagilarni ISHLATMANG.
+# Hammasini bir buyruq bilan olasiz:
+#
+#     npm run gen:secrets
+#
 JWT_SECRET=<yangi>
 JWT_REFRESH_SECRET=<yangi, birinchisidan boshqa>
 
 # Vercel manzilini olgach to'ldiring (3-qadam)
 CORS_ORIGINS=https://<web-nomi>.vercel.app
 
-# O'yin akkauntlarini shifrlash kaliti — BIR MARTA o'rnatiladi
-#   openssl rand -base64 48
-# ⚠️ Keyin O'ZGARTIRMANG: sotilgan akkauntlar ochilmay qoladi
+# Chat va raqamli mahsulotni shifrlash kaliti — BIR MARTA o'rnatiladi
+# ⚠️ Keyin O'ZGARTIRMANG: sotilgan mahsulotlar ochilmay qoladi.
+#    Uni alohida joyga ham saqlab qo'ying — qayta tiklab bo'lmaydi.
 CREDENTIALS_SECRET=<yangi, JWT sirlaridan boshqa>
 
 # Click — to'rttasi ham merchant.click.uz kabinetidan
