@@ -17,6 +17,17 @@ import * as deals from './deals.service.js';
 import { executeTransition } from './transition.js';
 
 // ─── Sxemalar ────────────────────────────────────────────────────────────────
+//
+// ⚠️ SXEMALARGA MAQSAD TIPI OCHIQ YOZILGAN: `z.ZodType<Xxx, ...>`.
+//
+// Nega: zod'ning `z.infer<>` inference'i muhitga qarab ishonchsiz.
+// Ba'zi TypeScript/zod kombinatsiyalarida u BARCHA maydonni `optional`
+// qilib qo'yadi va build faqat DEPLOY'da yiqiladi:
+//   "Property 'title' is optional ... but required in type 'CreateDealInput'"
+//
+// Maqsad tipi yozilganda natija biz belgilagan interfeysdan olinadi va
+// inference umuman ishtirok etmaydi. Bonus: sxema interfeysdan chetga
+// chiqsa, xato SHU YERDA chiqadi — ish vaqtida emas.
 
 /**
  * Summa SATR sifatida qabul qilinadi.
@@ -38,7 +49,7 @@ const amountSchema = z
     }
   });
 
-const createDealSchema = z.object({
+const createDealSchema: z.ZodType<deals.CreateDealInput, z.ZodTypeDef, unknown> = z.object({
   title: z.string().trim().min(3, 'Sarlavha kamida 3 belgi').max(200),
   description: z.string().trim().max(5000).default(''),
   amountTiyin: amountSchema,
@@ -66,7 +77,7 @@ const keywordSchema = z.object({
 });
 
 /** Raqamli mahsulot: havola, matn yoki fayl kaliti. */
-const contentSchema = z.object({
+const contentSchema: z.ZodType<deals.DigitalPayload, z.ZodTypeDef, unknown> = z.object({
   kind: z.enum(CONTENT_KINDS),
   value: z.string().trim().min(1, 'Qiymat bo\'sh bo\'lishi mumkin emas').max(5000),
   fileName: z.string().trim().max(300).optional(),
@@ -74,7 +85,8 @@ const contentSchema = z.object({
   fileMime: z.string().trim().max(120).optional(),
 });
 
-const shipSchema = z.object({
+type ShipInput = { carrier: string; trackingNumber: string; note?: string | undefined };
+const shipSchema: z.ZodType<ShipInput, z.ZodTypeDef, unknown> = z.object({
   carrier: z.string().trim().min(2, 'Yetkazuvchi nomi kerak').max(100),
   trackingNumber: z.string().trim().min(3, 'Trek-raqam kerak').max(100),
   note: z.string().trim().max(500).optional(),
@@ -84,7 +96,7 @@ const reasonSchema = z.object({
   reason: z.string().trim().min(10, 'Sabab kamida 10 belgi bo\'lishi kerak').max(2000),
 });
 
-const listQuerySchema = z.object({
+const listQuerySchema: z.ZodType<deals.DealListFilter, z.ZodTypeDef, unknown> = z.object({
   status: z.enum(DEAL_STATUSES).optional(),
   role: z.enum(['buyer', 'seller']).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),

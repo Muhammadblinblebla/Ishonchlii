@@ -24,22 +24,44 @@ const phone = z
   .trim()
   .regex(/^\+998\d{9}$/, 'Telefon raqam +998XXXXXXXXX ko\'rinishida bo\'lishi kerak');
 
-export const registerSchema = z.object({
+/**
+ * Tiplar QO'LDA yozilgan, `z.infer<>` dan olinmagan.
+ *
+ * Nega: zod inference'i muhitga qarab barcha maydonni `optional` qilib
+ * qo'yishi mumkin. Sxema ham, uni ishlatuvchi ham bir xil `z.infer` dan
+ * olsa, ikkalasi BIRGA buziladi va TypeScript xato bermaydi — natijada
+ * servis `undefined` qiymatni `string` deb qabul qiladi.
+ *
+ * Qo'lda yozilganda sxema tipdan chetga chiqsa xato SHU FAYLDA chiqadi.
+ */
+export interface RegisterInput {
+  readonly email: string;
+  readonly password: string;
+  readonly fullName: string;
+  readonly phone?: string | undefined;
+}
+
+export interface LoginInput {
+  readonly email: string;
+  readonly password: string;
+}
+
+export interface RefreshInput {
+  readonly refreshToken: string;
+}
+
+export const registerSchema: z.ZodType<RegisterInput, z.ZodTypeDef, unknown> = z.object({
   email,
   password,
   fullName: z.string().trim().min(2, 'Ism kamida 2 belgi').max(120),
   phone: phone.optional(),
 });
 
-export const loginSchema = z.object({
+export const loginSchema: z.ZodType<LoginInput, z.ZodTypeDef, unknown> = z.object({
   email,
   password: z.string().min(1, 'Parol kiritilmagan').max(200),
 });
 
-export const refreshSchema = z.object({
+export const refreshSchema: z.ZodType<RefreshInput, z.ZodTypeDef, unknown> = z.object({
   refreshToken: z.string().min(1, 'Refresh token kiritilmagan'),
 });
-
-export type RegisterInput = z.infer<typeof registerSchema>;
-export type LoginInput = z.infer<typeof loginSchema>;
-export type RefreshInput = z.infer<typeof refreshSchema>;
