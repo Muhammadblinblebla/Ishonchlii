@@ -10,7 +10,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run build --workspace=@escrowuz/shared && npm run build --workspace=@escrowuz/api",
+    "build": "npm run db:generate --workspace=@escrowuz/api && npm run build --workspace=@escrowuz/shared && npm run build --workspace=@escrowuz/api",
     "dev:api": "npm run dev --workspace=@escrowuz/api",
     "dev:web": "npm run dev --workspace=@escrowuz/web",
     "test": "npm run test --workspaces --if-present",
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "typescript": "^5.7.2",
+    "typescript": "5.9.3",
     "vitest": "^4.1.10"
   },
   "//overrides": [

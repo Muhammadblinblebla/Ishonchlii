@@ -97,7 +97,19 @@ const versionSchema = z.object({
 
 // ─── Yordamchilar ────────────────────────────────────────────────────────────
 
-function parse<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
+/**
+ * Sxema bo'yicha tekshiradi va TO'G'RI TIPLANGAN natijani qaytaradi.
+ *
+ * Tip parametri ATAYLAB `z.ZodType<Out>` shaklida — `T extends z.ZodTypeAny`
+ * + `z.infer<T>` emas. Sababi: ikkinchi shakl TypeScript yoki zod versiyasi
+ * o'zgarganda inference'ni yo'qotib, hamma maydonni `optional` qilib
+ * qo'yadi. Natijada mahalliy kompyuterda build o'tadi, deploy'da esa
+ * "Property 'title' is optional but required" degan xato chiqadi.
+ *
+ * Bu shaklda `Out` sxemadan TO'G'RIDAN-TO'G'RI olinadi va versiyaga
+ * bog'liq emas.
+ */
+function parse<Out>(schema: z.ZodType<Out, z.ZodTypeDef, unknown>, data: unknown): Out {
   const result = schema.safeParse(data);
   if (!result.success) {
     throw ApiError.badRequest(
