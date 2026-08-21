@@ -11,7 +11,17 @@ import { defineConfig } from 'prisma/config';
 //
 // Tashqi muhit har doim ustun: `DATABASE_URL` allaqachon o'rnatilgan
 // bo'lsa faylga umuman tegilmaydi.
-if (!process.env['DATABASE_URL']) {
+// ⚠️ IKKALA o'zgaruvchi ham tekshiriladi, faqat DATABASE_URL emas.
+//
+// `prisma.config.ts` mavjud bo'lsa Prisma CLI `.env` ni O'ZI YUKLAMAYDI
+// ("Prisma config detected, skipping environment variable loading") —
+// ya'ni yuklash butunlay shu fayl zimmasida.
+//
+// Sxema ikkita o'zgaruvchi so'raydi: `DATABASE_URL` va `DIRECT_URL`.
+// Faqat birinchisi tekshirilsa, u muhitda bor-u ikkinchisi yo'q holatda
+// `.env` o'tkazib yuborilardi va `migrate deploy` "Environment variable
+// not found: DIRECT_URL" bilan yiqilardi.
+if (!process.env['DATABASE_URL'] || !process.env['DIRECT_URL']) {
   const envPath = fileURLToPath(new URL('../../.env', import.meta.url));
   if (existsSync(envPath)) process.loadEnvFile(envPath);
 }

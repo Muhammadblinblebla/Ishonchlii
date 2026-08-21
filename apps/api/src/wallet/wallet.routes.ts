@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { parseTiyin, userAvailable, userPending } from '@escrowuz/shared';
 import { prisma, serializeBigInt } from '../db/prisma.js';
+import { LOCKED_TX, MONEY_TX } from '../db/tx-options.js';
 import { ApiError } from '../lib/errors.js';
 import * as ledger from '../ledger/ledger.service.js';
 import { getPaymentProvider } from '../payments/index.js';
@@ -136,7 +137,7 @@ export const walletRoutes: FastifyPluginAsync = async (app) => {
 
           return record;
         },
-        { isolationLevel: 'Serializable', timeout: 20_000 },
+        MONEY_TX,
       );
 
       // ── 2. QO'LDA to'lov: provayder pul chiqarishni qo'llab-quvvatlamasa ──
@@ -205,7 +206,7 @@ export const walletRoutes: FastifyPluginAsync = async (app) => {
           },
           tx,
         );
-      });
+      }, LOCKED_TX);
 
       throw ApiError.conflict(
         `Pul yechib bo'lmadi: ${result.error}. Summa hisobingizga qaytarildi.`,

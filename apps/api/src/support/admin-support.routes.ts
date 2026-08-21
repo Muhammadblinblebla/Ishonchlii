@@ -17,6 +17,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma, serializeBigInt } from '../db/prisma.js';
+import { STANDARD_TX } from '../db/tx-options.js';
 import { ApiError } from '../lib/errors.js';
 import { decryptSecret } from '../lib/crypto.js';
 
@@ -140,7 +141,7 @@ export const adminSupportRoutes: FastifyPluginAsync = async (app) => {
         where: { id },
         data: { status: 'answered', lastMessageAt: new Date() },
       });
-    });
+    }, STANDARD_TX);
 
     // Foydalanuvchiga xabar — u saytga qaytib kelishini bilmaydi
     await prisma.notification

@@ -15,6 +15,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { computePaymentBreakdown, distributeSplit, refundRuleFor } from '@escrowuz/shared';
 import { prisma, serializeBigInt } from '../db/prisma.js';
+import { LOCKED_TX } from '../db/tx-options.js';
 import { escrowAmountOf, executeTransition } from '../deals/transition.js';
 import { ApiError } from '../lib/errors.js';
 import { idempotencyGuard } from '../plugins/idempotency.plugin.js';
@@ -353,7 +354,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           },
           tx,
         );
-      });
+      }, LOCKED_TX);
 
       return reply.send({ ok: true });
     },

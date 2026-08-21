@@ -22,6 +22,7 @@ import {
   supportSubjects,
 } from '@escrowuz/shared';
 import { prisma } from '../db/prisma.js';
+import { STANDARD_TX } from '../db/tx-options.js';
 import { ApiError } from '../lib/errors.js';
 
 const idSchema = z.object({ id: z.string().uuid() });
@@ -140,7 +141,7 @@ async function addMessage(params: {
       where: { id: params.ticketId },
       data: { lastMessageAt: new Date(), status: params.newStatus },
     });
-  });
+  }, STANDARD_TX);
 }
 
 export const supportRoutes: FastifyPluginAsync = async (app) => {

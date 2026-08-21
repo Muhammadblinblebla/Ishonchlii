@@ -36,6 +36,7 @@ import {
   WALLET_HOLD_HOURS,
 } from '@escrowuz/shared';
 import { prisma } from '../db/prisma.js';
+import { MONEY_TX } from '../db/tx-options.js';
 import { ApiError } from '../lib/errors.js';
 import * as ledger from '../ledger/ledger.service.js';
 import { getPaymentProvider } from '../payments/index.js';
@@ -258,12 +259,8 @@ export async function executeTransition(
 
       return { deal: updated, previousStatus: from, ledgerTransactionId };
     },
-    {
-      // Escrow uchun eng qattiq izolyatsiya. Sekinroq, lekin pul bilan
-      // ishlashda tezlikdan ko'ra to'g'rilik muhimroq.
-      isolationLevel: 'Serializable',
-      timeout: 20_000,
-    },
+    // Izolyatsiya va muddatlar — `db/tx-options.ts` da, yagona joyda.
+    MONEY_TX,
   );
 }
 

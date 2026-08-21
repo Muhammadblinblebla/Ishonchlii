@@ -28,6 +28,7 @@
 
 import type { FastifyBaseLogger } from 'fastify';
 import { prisma } from '../db/prisma.js';
+import { MONEY_TX } from '../db/tx-options.js';
 import { executeTransition } from '../deals/transition.js';
 import { processPayment } from '../webhooks/webhooks.routes.js';
 import { flush } from '../notifications/notification.service.js';
@@ -247,7 +248,7 @@ export async function releaseWalletHolds(log: FastifyBaseLogger): Promise<JobRes
           where: { id: hold.id },
           data: { releasedAt: new Date() },
         });
-      }, { isolationLevel: 'Serializable', timeout: 20_000 });
+      }, MONEY_TX);
 
       result.processed++;
       log.info({ holdId: hold.id, userId: hold.userId }, 'Muzlatilgan pul ochildi');

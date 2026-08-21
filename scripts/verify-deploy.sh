@@ -52,6 +52,23 @@ step "Vercel build bosqichi"
 step "Dev bog'liqliklar tashlanmoqda (Dockerfile kabi)"
 run "npm prune --omit=dev"  npm prune --omit=dev
 
+# ─── Muhit — Railway paneli qanday bersa, shunday ───────────────────────────
+#
+# TARTIB MUHIM: bular `prisma validate` dan OLDIN o'rnatiladi.
+# Railway'da ham shunday: o'zgaruvchilar konteyner ishga tushishidan
+# oldin muhitda turadi va `migrate deploy` ularni o'shandan oladi.
+# Keyinroq qo'yilsa tekshiruv Railway'ni takrorlamay qolardi.
+export NODE_ENV=production API_PORT=3099
+export DATABASE_URL="postgresql://u:p@db.example.com:6543/postgres"
+export DIRECT_URL="postgresql://u:p@db.example.com:5432/postgres"
+export JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+export JWT_REFRESH_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+export CREDENTIALS_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+export CORS_ORIGINS="https://example.vercel.app"
+export PAYMENT_PROVIDER="click" CLICK_SERVICE_ID="1" CLICK_MERCHANT_ID="2"
+export CLICK_SECRET_KEY="3" CLICK_MERCHANT_USER_ID="4"
+export EMAIL_DRIVER="log"
+
 # `prisma.config.ts` — TypeScript fayli, lekin `typescript` endi yo'q.
 # Prisma uni o'z yuklovchisi (c12 → jiti) bilan o'qiydi. `validate`
 # bazaga ULANMAYDI, ya'ni sozlama va sxema o'qilishini toza tekshiradi.
@@ -64,16 +81,6 @@ step "Migratsiya vositasi prune'dan keyin ishlaydimi"
 
 step "Production serverini ko'tarish"
 cd "$DIR/apps/api"
-export NODE_ENV=production API_PORT=3099
-export DATABASE_URL="postgresql://u:p@db.example.com:6543/postgres"
-export DIRECT_URL="postgresql://u:p@db.example.com:5432/postgres"
-export JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
-export JWT_REFRESH_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
-export CREDENTIALS_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
-export CORS_ORIGINS="https://example.vercel.app"
-export PAYMENT_PROVIDER="click" CLICK_SERVICE_ID="1" CLICK_MERCHANT_ID="2"
-export CLICK_SECRET_KEY="3" CLICK_MERCHANT_USER_ID="4"
-export EMAIL_DRIVER="log"
 
 node dist/server.js >"$DIR/.server.log" 2>&1 &
 SRV=$!

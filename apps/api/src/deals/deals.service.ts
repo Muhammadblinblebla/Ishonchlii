@@ -16,6 +16,7 @@ import {
   validateKeyword,
 } from '@escrowuz/shared';
 import { prisma } from '../db/prisma.js';
+import { STANDARD_TX } from '../db/tx-options.js';
 import { ApiError } from '../lib/errors.js';
 import { decryptSecret, encryptSecret } from '../lib/crypto.js';
 import { getPaymentProvider } from '../payments/index.js';
@@ -198,7 +199,7 @@ export async function claimDeal(dealId: string, buyerId: string): Promise<Deal> 
       buyer?.fullName ?? 'Xaridor',
       tx,
     );
-  });
+  }, STANDARD_TX);
 
   return result.deal;
 }

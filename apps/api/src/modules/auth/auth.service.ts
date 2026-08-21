@@ -1,5 +1,6 @@
 import type { User } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
+import { STANDARD_TX } from '../../db/tx-options.js';
 import { ApiError } from '../../lib/errors.js';
 import { fakeVerify, hashPassword, verifyPassword } from '../../lib/password.js';
 import {
@@ -170,7 +171,7 @@ export async function refresh(rawToken: string, ctx: AuthContext): Promise<AuthR
       },
     });
     return newToken;
-  });
+  }, STANDARD_TX);
 
   return {
     user: toPublicUser(stored.user),
