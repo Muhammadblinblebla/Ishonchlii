@@ -186,7 +186,7 @@ describe('Idempotentlik — pul ikki marta o\'tmaydi (§12)', () => {
 });
 
 describe('To\'liq savdo sikli — pul yo\'qolmaydi', () => {
-  it('to\'lov → yakunlash: sotuvchi 9 700 000, platforma 300 000', async () => {
+  it('to\'lov → yakunlash → muzlatish ochilishi: har bosqichda pul joyida', async () => {
     const seller = await prisma.user.create({
       data: { email: uniqueEmail('cycle-seller'), fullName: 'S', passwordHash: 'x' },
     });
@@ -208,9 +208,26 @@ describe('To\'liq savdo sikli — pul yo\'qolmaydi', () => {
       idempotencyKey: key(),
     });
 
+    // 3. Pul sotuvchiniki — lekin hali YECHIB BO'LMAYDI.
+    //
+    // `releaseLegs` uni `holding` ga tushiradi, `available` ga emas:
+    // savdo yakunlandi, ammo 30 soat muzlatiladi (WALLET_HOLD_HOURS).
+    // Nega: to'lov tizimi to'lovni qaytarib olishi mumkin, va firibgar
+    // soxta savdo qilib pulni darhol yechib ketolmasligi kerak.
     const done = await getBalance(seller.id);
-    expect(done.pendingTiyin).toBe(0n); // muzlatilgan qismi bo'shadi
-    expect(done.availableTiyin).toBe(9_700_000n); // yechib olsa bo'ladi
+    expect(done.pendingTiyin).toBe(0n); // savdo tugadi
+    expect(done.holdingTiyin).toBe(AMOUNT - COMMISSION); // muzlatilgan
+    expect(done.availableTiyin).toBe(0n); // hali yechib BO'LMAYDI
+
+    // 4. 30 soat o'tdi — fon vazifasi muzlatishni ochdi
+    await post({
+      legs: releaseHoldLegs(seller.id, AMOUNT - COMMISSION),
+      idempotencyKey: key(),
+    });
+
+    const unlocked = await getBalance(seller.id);
+    expect(unlocked.holdingTiyin).toBe(0n);
+    expect(unlocked.availableTiyin).toBe(AMOUNT - COMMISSION); // endi yechsa bo'ladi
   });
 
   it('savdo bo\'yicha barcha yozuvlar yig\'indisi 0', async () => {

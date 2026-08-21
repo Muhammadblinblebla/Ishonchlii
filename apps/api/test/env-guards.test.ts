@@ -23,7 +23,9 @@ const apiRoot = fileURLToPath(new URL('..', import.meta.url));
 const loaderPath = `${apiRoot}.env-guard-probe.ts`;
 writeFileSync(
   loaderPath,
-  `await import('./src/config/env.js');
+  `const { env } = await import('./src/config/env.js');
+// Tinglanadigan port testda tekshiriladi — qarang: "Hosting bergan port"
+console.log('PORT=' + env.API_PORT);
 console.log('STARTED');
 `,
 );
@@ -243,5 +245,22 @@ describe('Auth sozlamalari', () => {
     });
     expect(r.started).toBe(false);
     expect(r.output).toContain('CORS_ORIGINS');
+  });
+});
+
+describe('Hosting bergan port', () => {
+  // Railway/Render/Heroku tinglash portini `PORT` orqali beradi. Kod uni
+  // olmasa server boshqa portda tinglaydi va healthcheck yiqiladi —
+  // loglarda esa hech qanday xato ko'rinmaydi.
+  it('API_PORT ko\'rsatilmasa PORT ishlatiladi', async () => {
+    const r = await probe({ PORT: '8080', API_PORT: '' });
+    expect(r.started, r.output).toBe(true);
+    expect(r.output).toContain('PORT=8080');
+  });
+
+  it('aniq berilgan API_PORT ustun turadi', async () => {
+    const r = await probe({ PORT: '8080', API_PORT: '3001' });
+    expect(r.started, r.output).toBe(true);
+    expect(r.output).toContain('PORT=3001');
   });
 });

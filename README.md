@@ -101,13 +101,24 @@ borguncha vaqt tugaydi.
 | 11. Kalit so'z + raqamli mahsulot + chat + 30 soatlik muzlatish | ✅ |
 | 12. Nizolarni avtomatik hal qilish (adminsiz) | ✅ |
 
-**227 test bazasiz o'tadi** (120 API + 107 sof mantiq), typecheck toza,
+**229 test bazasiz o'tadi** (122 API + 107 sof mantiq), typecheck toza,
 ikkala ilova ham build bo'ladi.
 
-⚠️ Bazaga tegadigan testlar (deal-flow, ledger, chat) lokalda ishonchsiz
-yuradi — Supabase Tokioda va har so'rov ~1 soniya ketmoqda, natijada
-90 soniyalik timeout'lar chiqadi. **CI'da bunday muammo yo'q**: u o'z
-Postgres konteynerida ishlaydi, ya'ni tarmoq kechikishi nolga yaqin.
+⚠️ **Bazaga tegadigan testlarni lokalda yurgizmang** — Supabase Tokioda
+va bitta test 15 daqiqagacha cho'zilib, "Server has closed the connection"
+bilan uzilishi mumkin. Bu kod xatosi emas, masofa.
+
+Ular **CI'da** yurgiziladi: u o'z Postgres konteynerida ishlaydi, tarmoq
+kechikishi nolga yaqin.
+
+Lokalda ishonchli va tez yuradiganlari:
+
+```bash
+npm run test --workspace=@escrowuz/shared          # 107 ta
+cd apps/api && SKIP_DB_CHECK=1 npx vitest run \
+  test/payments.test.ts test/checkout-uz-shape.test.ts \
+  test/click.test.ts test/env-guards.test.ts test/routes-exist.test.ts
+```
 
 ### Ma'lum bo'shliqlar
 

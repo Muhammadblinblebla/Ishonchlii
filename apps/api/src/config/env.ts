@@ -20,6 +20,22 @@ if (!process.env['DATABASE_URL']) {
   if (existsSync(envPath)) process.loadEnvFile(envPath);
 }
 
+// ─── Hosting bergan portni qabul qilish ──────────────────────────────────────
+//
+// Railway, Render, Heroku va boshqalar tinglash kerak bo'lgan portni `PORT`
+// o'zgaruvchisi orqali beradi va O'SHA portga trafik yuboradi. Biz esa
+// `API_PORT` ni o'qiymiz.
+//
+// Ikkalasi mos kelmasa: server 3001 da tinglaydi, hosting 8080 ga uradi,
+// healthcheck javob olmaydi va deploy "unhealthy" bo'lib yiqiladi —
+// loglarda esa server bemalol "ishga tushdim" deb turadi. Shuning uchun
+// `API_PORT` ko'rsatilmagan bo'lsa `PORT` ishlatiladi.
+//
+// Aniq berilgan `API_PORT` har doim ustun — ya'ni xohlasangiz majburlay olasiz.
+if (!process.env['API_PORT'] && process.env['PORT']) {
+  process.env['API_PORT'] = process.env['PORT'];
+}
+
 const isProd = process.env['NODE_ENV'] === 'production';
 
 const schema = z.object({

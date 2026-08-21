@@ -192,9 +192,14 @@ describe('O\'yin akkaunti savdosi — to\'liq oqim', () => {
     expect(confirm.statusCode, confirm.body).toBe(200);
 
     // Komissiya jismoniy tovardagidek ushlanadi — o'yin savdosida
-    // pul matematikasi hech qanday farq qilmaydi
+    // pul matematikasi hech qanday farq qilmaydi.
+    //
+    // Pul `holding` da: savdo tugadi, lekin 30 soat muzlatiladi
+    // (WALLET_HOLD_HOURS). `available` faqat fon vazifasi muzlatishni
+    // ochgandan keyin to'ladi — bu yerda u ishga tushmaydi.
     const done = await getBalance(seller.id);
-    expect(done.availableTiyin).toBe(SELLER_GETS);
+    expect(done.holdingTiyin).toBe(SELLER_GETS);
+    expect(done.availableTiyin).toBe(0n);
     expect(done.pendingTiyin).toBe(0n);
 
     // Ledger muvozanati buzilmagan

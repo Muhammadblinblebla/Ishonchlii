@@ -17,7 +17,13 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../src/db/prisma.js';
-import { getBalance, post, depositLegs, releaseLegs } from '../src/ledger/ledger.service.js';
+import {
+  getBalance,
+  post,
+  depositLegs,
+  releaseHoldLegs,
+  releaseLegs,
+} from '../src/ledger/ledger.service.js';
 import { MockPaymentProvider } from '../src/payments/mock.provider.js';
 import { setPaymentProvider } from '../src/payments/index.js';
 import type { PaymentProvider } from '../src/payments/provider.js';
@@ -35,12 +41,23 @@ let admin: TestUser;
 
 const auth = (u: TestUser): Record<string, string> => ({ authorization: `Bearer ${u.token}` });
 
-/** Sotuvchiga yechib olinadigan mablag' beradi (haqiqiy savdo siklisiz). */
+/**
+ * Sotuvchiga YECHIB OLINADIGAN mablag' beradi (haqiqiy savdo siklisiz).
+ *
+ * ⚠️ Uchala qadam ham SHART. `releaseLegs` pulni `holding` ga tushiradi
+ * (30 soatlik muzlatish), `available` ga emas — oxirgi qadamsiz yechish
+ * so'rovi "mablag' yetarli emas" bilan rad etilardi.
+ */
 async function giveBalance(userId: string, tiyin: bigint): Promise<void> {
   await post({ legs: depositLegs(userId, tiyin, 0n, 'test'), idempotencyKey: `mp-d-${randomUUID()}` });
   await post({
     legs: releaseLegs(userId, tiyin, tiyin, 0n),
     idempotencyKey: `mp-r-${randomUUID()}`,
+  });
+  // Muzlatishni ochamiz — fon vazifasi 30 soatdan keyin aynan shuni qiladi
+  await post({
+    legs: releaseHoldLegs(userId, tiyin),
+    idempotencyKey: `mp-h-${randomUUID()}`,
   });
 }
 

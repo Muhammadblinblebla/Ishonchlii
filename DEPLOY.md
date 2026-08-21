@@ -155,9 +155,13 @@ CLICK_MERCHANT_ID=<kabinetdan>
 CLICK_SECRET_KEY=<kabinetdan>
 CLICK_MERCHANT_USER_ID=<kabinetdan>
 
-API_PORT=3001
 API_HOST=0.0.0.0
 ```
+
+> `API_PORT` ni **qo'ymang**. Railway o'zi `PORT` beradi va kod uni
+> avtomatik oladi. Qo'lda 3001 deb yozib qo'ysangiz Railway boshqa portga
+> murojaat qiladi, healthcheck javob olmaydi va deploy "unhealthy" bo'lib
+> yiqiladi — loglarda esa server bemalol "ishga tushdim" deb turadi.
 
 > Server ishga tushmasa loglarni o'qing — `config/env.ts` qaysi o'zgaruvchi
 > yetishmayotganini **aniq nomi bilan** yozadi va ishga tushmaydi. Bu ataylab:
