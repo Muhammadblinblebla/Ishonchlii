@@ -18,6 +18,8 @@ import { supportRoutes } from './support/support.routes.js';
 import { adminSupportRoutes } from './support/admin-support.routes.js';
 import { idempotencyPlugin } from './plugins/idempotency.plugin.js';
 import { authPlugin } from './plugins/auth.plugin.js';
+// Qattiq tekshiruv o'chirilgan bo'lsa build shu yerda yiqiladi.
+import './lib/strict-guard.js';
 
 export interface BuildAppOptions {
   /**
