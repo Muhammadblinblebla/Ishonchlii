@@ -203,8 +203,34 @@ curl https://escrowuz-api.up.railway.app/health
 
 1. <https://vercel.com> → GitHub bilan kiring
 2. **Add New → Project** → `escrowuz`
-3. **Root Directory**: `apps/web`
+3. **Root Directory**: `apps/web` ← eng muhim sozlama, pastga qarang
 4. Framework: Next.js (o'zi aniqlaydi)
+
+### ⚠️ Root Directory `apps/web` bo'lishi SHART
+
+Vercel **faqat frontendni** quradi. API Railway'da turadi.
+
+Root Directory `apps/api` ga qo'yilsa Vercel API'ni qurishga urinadi va
+build TypeScript xatolari bilan yiqiladi:
+
+```
+error TS2322: Type 'ZodObject<...>' is not assignable to
+  type 'ZodType<CreateDealInput, ZodTypeDef, unknown>'.
+    Property 'title' is optional ... but required in type 'CreateDealInput'
+```
+
+**Bu kod xatosi emas.** Vercel `apps/api` ni Next.js loyihasi deb o'ylab,
+`tsconfig.json` ga o'z standartini — `strict: false` ni — qo'yadi.
+`strictNullChecks` o'chganda esa zod barcha maydonlarni "ixtiyoriy" deb
+hisoblaydi, chunki u aynan shu shart orqali majburiylikni aniqlaydi.
+
+Xato chiqsa: **Settings → Build and Deployment → Root Directory** ni
+`apps/web` ga o'zgartiring va qayta deploy qiling.
+
+> Endi bu holat o'zini bildiradi: `apps/api/vercel.json` bunday
+> sozlamada build'ni darhol to'xtatib, sababini yozadi. Bundan tashqari
+> `packages/shared/src/strict-guard.ts` — qattiq tekshiruv o'chsa
+> kompilyatsiyani yiqitadigan qorovul.
 
 ### Muhit o'zgaruvchisi
 

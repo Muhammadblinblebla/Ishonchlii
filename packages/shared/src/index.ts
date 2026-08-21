@@ -1,3 +1,4 @@
+export * from './strict-guard.js';
 export * from './deal-status.js';
 export * from './deal-types.js';
 export * from './deal-state-machine.js';

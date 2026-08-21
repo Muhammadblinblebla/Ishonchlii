@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "echo '' && echo '  ❌ API Vercel ga deploy qilinmaydi.' && echo '' && echo '  Vercel loyihasining Root Directory sozlamasi apps/api ga qo yilgan.' && echo '  U apps/web bo lishi kerak.' && echo '' && echo '  Vercel  -> Settings -> Build and Deployment -> Root Directory: apps/web' && echo '' && echo '  API Railway da turadi (railway.json, ildizda). Batafsil: DEPLOY.md' && echo '' && exit 1",
+  "installCommand": "echo 'o tkazib yuborildi'"
+}

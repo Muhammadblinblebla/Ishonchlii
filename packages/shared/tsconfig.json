@@ -2,7 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "./src",
-    "outDir": "./dist"
+    "outDir": "./dist",
+
+    // ⚠️ ATAYLAB TAKRORLANGAN — sababi `apps/api/tsconfig.json` da
+    // tushuntirilgan: tashqi vosita bu faylni qayta yozsa, ochiq
+    // yozilgan sozlama uning standartini to'sib qoladi.
+    "strict": true,
+    "strictNullChecks": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "dist"]

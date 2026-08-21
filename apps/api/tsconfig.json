@@ -3,7 +3,24 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "types": ["node"]
+    "types": ["node"],
+
+    // ⚠️ ATAYLAB TAKRORLANGAN — `tsconfig.base.json` da ham bor.
+    //
+    // Sabab: Vercel/Next kabi vositalar `tsconfig.json` ni O'ZI QAYTA
+    // YOZADI va yetishmayotgan sozlamalarga o'z standartini qo'yadi —
+    // `strict: false` ham shular ichida. Ular faqat FAYLDA YO'Q
+    // sozlamalarni qo'shadi, shuning uchun bu yerda ochiq yozilgani
+    // ularni to'sib qoladi.
+    //
+    // Bu shunchaki uslub masalasi emas: `strictNullChecks` o'chsa zod
+    // barcha maydonlarni ixtiyoriy deb hisoblaydi va `undefined`
+    // qiymatlar `string` deb belgilangan joylarga kirib boradi.
+    // Batafsil: `packages/shared/src/strict-guard.ts`
+    "strict": true,
+    "strictNullChecks": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "dist", "test"],
