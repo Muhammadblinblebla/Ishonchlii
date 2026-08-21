@@ -302,19 +302,21 @@ packages/shared/          ikkala tomon ishlatadigan mantiq
 apps/api/                 Fastify monolit
   deals/transition.ts     ← holat o'zgarishining YAGONA yo'li
   ledger/                 ← pul yozishning YAGONA darvozasi
+  db/tx-options.ts        ← tranzaksiya muddatlarining YAGONA manbai
   payments/               provider.ts | mock | click | checkout-uz
   webhooks/               webhook qabul qilish
 
 apps/web/                 Next.js App Router
 ```
 
-### Uchta "yagona darvoza"
+### "Yagona darvoza" qoidasi
 
 | Nima | Qayerda | Nega |
 |---|---|---|
 | Holat o'zgarishi | `deals/transition.ts` | Hech qayerda `deal.update({status})` yozilmaydi |
 | Pul yozuvi | `ledger/ledger.service.ts` | Muvozanat va idempotentlik bir joyda majburlanadi |
 | Komissiya qoidasi | `commission-policy.ts` | Foiz kodga tarqalib ketmasligi uchun |
+| Tranzaksiya muddati | `db/tx-options.ts` | Chaqiruv joyiga yozilsa bir qismi eskirib qoladi |
 
 ---
 

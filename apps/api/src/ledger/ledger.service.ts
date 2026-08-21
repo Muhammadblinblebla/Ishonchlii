@@ -321,7 +321,25 @@ export function refundLegs(
   return legs;
 }
 
-/** Foydalanuvchi pulni tashqariga yechib oldi. */
+/**
+ * Foydalanuvchi pulni tashqariga yechib oldi.
+ *
+ * ⚠️ O'ZI YETARLI MABLAG'NI TEKSHIRMAYDI.
+ *
+ * Bu funksiya shunchaki yozuvlarni quradi. Balans yetarliligini
+ * `assertSufficientFunds()` tekshiradi va u SHU TRANZAKSIYA ICHIDA,
+ * `post()` dan OLDIN chaqirilishi SHART — u foydalanuvchi qatorini
+ * `FOR UPDATE` bilan qulflaydi, ya'ni ikkita parallel yechish so'rovi
+ * ikkalasi ham "yetarli" javobini ololmaydi.
+ *
+ * Namuna: `wallet/wallet.routes.ts` — yagona to'g'ri chaqiruv joyi.
+ *
+ * Tekshiruvsiz chaqirilsa balans MANFIY bo'lib qoladi va ledger buni
+ * to'xtatmaydi: yozuvlar muvozanatda (SUM = 0), shunchaki mavjud
+ * bo'lmagan pul yechilgan bo'ladi. Aynan shunday xato `ledger.test.ts`
+ * da bo'lgan — 30 soatlik muzlatish qo'shilganda test yangilanmay
+ * qolib, bo'sh `available` hisobidan yechgan.
+ */
 export function payoutLegs(userId: string, amountTiyin: bigint, provider: string): LedgerLeg[] {
   return [
     { accountId: userAvailable(userId), amount: -amountTiyin, entryType: 'payout' },

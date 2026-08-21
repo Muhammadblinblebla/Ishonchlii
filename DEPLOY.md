@@ -225,10 +225,20 @@ https://escrowuz.vercel.app
 `railway.json` dagi `startCommand` har deploy'da `prisma migrate deploy` ni
 ishga tushiradi — migratsiyalar uchun qo'lda hech narsa qilish shart emas.
 
-### Bazani tozalash
+### Bazani tozalash — SHART, ixtiyoriy emas
 
 Ishlab chiqish davomida test savdolari to'planib qoladi. Haqiqiy
-foydalanuvchilarni qabul qilishdan oldin bazani tozalang:
+foydalanuvchilarni qabul qilishdan oldin bazani tozalang.
+
+**Hozir bazada nima bor:** testlardan qolgan ikkita hisobda `available`
+balans **manfiy** (−50 000 so'm). Bu kod kamchiligi emas — eskirgan bir
+test bo'sh hisobdan pul yechgan (tuzatildi). Foydalanuvchilarning o'zi
+allaqachon o'chirilgan, lekin `ledger_entries` append-only, ya'ni
+yozuvlarni O'CHIRIB BO'LMAYDI.
+
+Ular faqat quyidagi tozalash bilan ketadi. Tozalanmasa `npm run
+ledger:check` va ledger testlari doim qizil turadi va haqiqiy muammoni
+shovqin ichida yo'qotib qo'yasiz.
 
 ```bash
 npm run db:reset -- --hammasini-ochirish   # HAMMASINI o'chiradi

@@ -25,12 +25,17 @@ import {
   payoutLegs,
   post,
   refundLegs,
+  releaseHoldLegs,
   releaseLegs,
 } from '../src/ledger/ledger.service.js';
 import { cleanupTestUsers, uniqueEmail } from './helpers/setup.js';
 
 const AMOUNT = 10_000_000n; // 100 000 so'm
-const COMMISSION = 300_000n; // 3%
+// Ixtiyoriy taqsimot — komissiya SIYOSATI emas. Ledger faqat
+// "sotuvchi ulushi + komissiya = escrow" tengligini talab qiladi,
+// foizning o'zi bilan ishi yo'q. Haqiqiy foiz `commission-policy.ts` da
+// va u yerda sinaladi — shu sababli bu son o'zgarsa ham test buzilmaydi.
+const COMMISSION = 300_000n;
 
 let buyerId: string;
 let sellerId: string;
@@ -281,19 +286,42 @@ describe('Qaytarish', () => {
 });
 
 describe('Yechish (payout)', () => {
-  it('available balansdan chiqadi', async () => {
+  /**
+   * ⚠️ TARTIB MUHIM: release → hold ochilishi → payout.
+   *
+   * `releaseLegs` pulni `available` ga EMAS, `holding` ga tushiradi —
+   * savdo yakunlandi, lekin pul 30 soat muzlatiladi. Faqat
+   * `releaseHoldLegs` dan keyin u yechib olinadigan bo'ladi.
+   *
+   * Bu qadam tushib qolsa `payout` bo'sh `available` hisobidan yechadi
+   * va balans MANFIY bo'lib qoladi. Aynan shunday bo'lgan edi: bu test
+   * 30 soatlik muzlatish qo'shilganda yangilanmay qolib, bazada ikkita
+   * manfiy hisob qoldirgan.
+   */
+  it('available balansdan chiqadi — muzlatish ochilgandan KEYIN', async () => {
     const seller = await prisma.user.create({
       data: { email: uniqueEmail('po-seller'), fullName: 'S', passwordHash: 'x' },
     });
 
+    const sellerShare = AMOUNT - COMMISSION;
+
     await post({ legs: depositLegs(seller.id, AMOUNT, 0n, 'test'), idempotencyKey: key() });
     await post({
-      legs: releaseLegs(seller.id, AMOUNT, AMOUNT - COMMISSION, COMMISSION),
+      legs: releaseLegs(seller.id, AMOUNT, sellerShare, COMMISSION),
       idempotencyKey: key(),
     });
+
+    // Muzlatish hali ochilmagan: pul `holding` da, `available` bo'sh.
+    const beforeRelease = await getBalance(seller.id);
+    expect(beforeRelease.holdingTiyin).toBe(sellerShare);
+    expect(beforeRelease.availableTiyin).toBe(0n);
+
+    await post({ legs: releaseHoldLegs(seller.id, sellerShare), idempotencyKey: key() });
     await post({ legs: payoutLegs(seller.id, 5_000_000n, 'test'), idempotencyKey: key() });
 
-    expect((await getBalance(seller.id)).availableTiyin).toBe(4_700_000n);
+    const after = await getBalance(seller.id);
+    expect(after.availableTiyin).toBe(sellerShare - 5_000_000n);
+    expect(after.holdingTiyin).toBe(0n);
   });
 });
 
